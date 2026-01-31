@@ -1,0 +1,280 @@
+drop table if exists public.user_role cascade;
+drop table if exists public.user cascade;
+drop table if exists public.site cascade;
+drop table if exists public.product cascade;
+drop table if exists public.manufacturer cascade;
+drop table if exists public.manufacturer_group cascade;
+drop table if exists public.stock cascade;
+drop table if exists public.manufacturer_group_detail cascade;
+drop table if exists public.contract cascade;
+drop table if exists public.order cascade;
+drop table if exists public.stock_out cascade;
+drop table if exists public.stock_in cascade;
+drop table if exists public.purchase cascade;
+drop table if exists public.statement cascade;
+drop table if exists public.statement_material_detail cascade;
+drop table if exists public.statement_other_expenses_item cascade;
+drop table if exists public.statement_other_expenses_detail cascade;
+commit;
+
+create table "user_role" (
+                             "id" char(36) primary key,
+                             "code" varchar(50) not null,
+                             "name" varchar(200) not null
+);
+
+create table "user" (
+                        "id" char(36) primary key,
+                        "name" varchar(200) not null,
+                        "username" varchar(50) not null,
+                        "password" varchar(32) not null,
+                        "role_id" char(36) not null,
+                        "wx_openid" text,
+                        "create_time" timestamp not null default 'now()',
+                        "update_time" timestamp not null default 'now()'
+);
+
+create table "site" (
+                        "id" char(36) primary key,
+                        "code" varchar(50) not null,
+                        "name" varchar(200) not null,
+                        "create_time" timestamp not null default 'now()',
+                        "update_time" timestamp not null default 'now()'
+);
+
+create table "product" (
+                           "id" char(36) primary key,
+                           "code" varchar(50) not null,
+                           "name" varchar(200) not null,
+                           "unit" varchar(20) not null,
+                           "price" numeric(19,4),
+                           "create_time" timestamp not null default 'now()',
+                           "update_time" timestamp not null default 'now()'
+);
+
+create table "manufacturer" (
+                                "id" char(36) primary key,
+                                "code" varchar(50) not null,
+                                "name" varchar(200) not null,
+                                "create_time" timestamp not null default 'now()',
+                                "update_time" timestamp not null default 'now()'
+);
+
+create table "manufacturer_group" (
+                                      "id" char(36) primary key,
+                                      "code" varchar(50) not null,
+                                      "name" varchar(200) not null,
+                                      "create_time" timestamp not null default 'now()',
+                                      "update_time" timestamp not null default 'now()'
+);
+
+create table "stock" (
+                         "id" char(36) primary key,
+                         "manufacturer_id" char(36) not null,
+                         "product_id" char(36) not null,
+                         "quantity" numeric(19,4) not null
+);
+
+create table "manufacturer_group_detail" (
+                                             "id" char(36) primary key,
+                                             "manufacturer_group_id" char(36) not null,
+                                             "manufacturer_id" char(36) not null
+);
+
+create table "contract" (
+                            "id" char(36) primary key,
+                            "code" varchar(100) not null,
+                            "name" varchar(200) not null,
+                            "site_id" char(36) not null,
+                            "manufacturer_group_id" char(36) not null,
+                            "agent_id" char(36) not null,
+                            "status" char(1) not null,
+                            "create_time" timestamp not null default 'now()',
+                            "update_time" timestamp not null default 'now()'
+);
+
+create table "order" (
+                         "id" char(36) primary key,
+                         "code" varchar(50) not null,
+                         "contract_id" char(36) not null,
+                         "product_id" char(36) not null,
+                         "quantity" numeric(19,4) not null,
+                         "status" char(1) not null,
+                         "create_time" timestamp not null default 'now()',
+                         "update_time" timestamp not null default 'now()'
+);
+
+create table "stock_out" (
+                             "id" char(36) primary key,
+                             "code" varchar(50) not null,
+                             "order_id" char(36) not null,
+                             "manufacturer_id" char(36) not null,
+                             "product_id" char(36) not null,
+                             "quantity" numeric(19,4) not null,
+                             "create_time" timestamp not null default 'now()',
+                             "update_time" timestamp not null default 'now()'
+);
+
+create table "stock_in" (
+                            "id" char(36) primary key,
+                            "code" varchar(50) not null,
+                            "order_id" char(36) not null,
+                            "product_id" char(36) not null,
+                            "quantity" numeric(19,4) not null,
+                            "create_time" timestamp not null default 'now()',
+                            "update_time" timestamp not null default 'now()'
+);
+
+create table "purchase" (
+                            "id" char(36) primary key,
+                            "code" varchar(50) not null,
+                            "order_id" char(36) not null,
+                            "purchaser" char(36) not null,
+                            "payer_manufacturer_id" char(36) not null,
+                            "payee_manufacturer_id" char(36) not null,
+                            "product_id" char(36) not null,
+                            "quantity" numeric(19,4) not null,
+                            "amount" numeric(19,4) not null,
+                            "create_time" timestamp not null default 'now()',
+                            "update_time" timestamp not null default 'now()'
+);
+
+create table "statement" (
+                             "id" char(36) primary key,
+                             "code" varchar(50) not null,
+                             "contract_id" char(36) not null,
+                             "start_time" timestamp not null,
+                             "end_time" timestamp not null,
+                             "create_time" timestamp not null default 'now()',
+                             "update_time" timestamp not null default 'now()'
+);
+
+create table "statement_material_detail" (
+                                             "id" char(36) primary key,
+                                             "statement_id" char(36) not null,
+                                             "product_id" char(36) not null,
+                                             "quantity" numeric(19,4) not null,
+                                             "amount" numeric(19,4) not null,
+                                             "create_time" timestamp not null default 'now()',
+                                             "update_time" timestamp not null default 'now()'
+);
+
+create table "statement_other_expenses_item" (
+                                                 "id" char(36) primary key,
+                                                 "code" varchar(50) not null,
+                                                 "name" varchar(200) not null,
+                                                 "create_time" timestamp not null default 'now()',
+                                                 "update_time" timestamp not null default 'now()'
+);
+
+create table "statement_other_expenses_detail" (
+                                                   "id" char(36) primary key,
+                                                   "statement_id" char(36) not null,
+                                                   "item_id" char(36) not null,
+                                                   "amount" numeric(19,4) not null,
+                                                   "create_time" timestamp not null default 'now()',
+                                                   "update_time" timestamp not null default 'now()'
+);
+commit;
+
+create unique index on "user_role" ("code");
+create unique index on "user" ("username");
+create unique index on "user" ("wx_openid");
+create unique index on "site" ("code");
+create unique index on "product" ("code");
+create unique index on "manufacturer" ("code");
+create unique index on "manufacturer_group" ("code");
+create unique index on "manufacturer_group_detail" ("manufacturer_group_id", "manufacturer_id");
+create unique index on "contract" ("code");
+create unique index on "order" ("code");
+create unique index on "stock_out" ("code");
+create unique index on "purchase" ("code");
+create unique index on "statement" ("code");
+create unique index on "statement_other_expenses_item" ("code");
+comment on table "user_role" is '用户角色';
+comment on table "user" is '用户';
+comment on table "site" is '工地';
+comment on table "product" is '产品';
+comment on table "manufacturer" is '厂家';
+comment on table "manufacturer_group" is '厂家组';
+comment on table "stock" is '库存';
+comment on table "manufacturer_group_detail" is '厂家组详情';
+comment on table "contract" is '合同';
+comment on table "order" is '订单';
+comment on table "stock_out" is '出库';
+comment on table "stock_in" is '入库';
+comment on table "purchase" is '采购单';
+comment on table "statement" is '结算单';
+comment on table "statement_material_detail" is '结算单物资明细';
+comment on table "statement_other_expenses_item" is '结算单其他费用项';
+comment on table "statement_other_expenses_detail" is '结算单其他费用明细';
+alter table "user" add foreign key ("role_id") references "user_role" ("id");
+alter table "stock" add foreign key ("manufacturer_id") references "manufacturer" ("id");
+alter table "stock" add foreign key ("product_id") references "product" ("id");
+alter table "manufacturer_group_detail" add foreign key ("manufacturer_group_id") references "manufacturer_group" ("id");
+alter table "manufacturer_group_detail" add foreign key ("manufacturer_id") references "manufacturer" ("id");
+alter table "contract" add foreign key ("site_id") references "site" ("id");
+alter table "contract" add foreign key ("manufacturer_group_id") references "manufacturer_group" ("id");
+alter table "contract" add foreign key ("agent_id") references "user" ("id");
+alter table "order" add foreign key ("contract_id") references "contract" ("id");
+alter table "order" add foreign key ("product_id") references "product" ("id");
+alter table "stock_out" add foreign key ("order_id") references "order" ("id");
+alter table "stock_out" add foreign key ("manufacturer_id") references "manufacturer" ("id");
+alter table "stock_out" add foreign key ("product_id") references "product" ("id");
+alter table "stock_in" add foreign key ("order_id") references "order" ("id");
+alter table "stock_in" add foreign key ("product_id") references "product" ("id");
+alter table "purchase" add foreign key ("order_id") references "order" ("id");
+alter table "purchase" add foreign key ("purchaser") references "user" ("id");
+alter table "purchase" add foreign key ("payer_manufacturer_id") references "manufacturer" ("id");
+alter table "purchase" add foreign key ("payee_manufacturer_id") references "manufacturer" ("id");
+alter table "purchase" add foreign key ("product_id") references "product" ("id");
+alter table "statement" add foreign key ("contract_id") references "contract" ("id");
+alter table "statement_material_detail" add foreign key ("statement_id") references "statement" ("id");
+alter table "statement_material_detail" add foreign key ("product_id") references "product" ("id");
+alter table "statement_other_expenses_detail" add foreign key ("statement_id") references "statement" ("id");
+alter table "statement_other_expenses_detail" add foreign key ("item_id") references "statement_other_expenses_item" ("id");
+commit;
+
+insert into user_role values ('a0632c3a-7d43-4924-a9fc-a1d9c9b86af7', 'admin', '管理员');
+insert into user_role values ('f4457900-0841-4478-8f13-9695ca9c5b3f', 'user', '用户');
+insert into "user" values ('5ea0fc66-0946-4a48-bc99-8c85fdf0f8e0', '李拓', 'admin', 'e10adc3949ba59abbe56e057f20f883e', 'a0632c3a-7d43-4924-a9fc-a1d9c9b86af7', '2026-01-01 00:00:00.00', '2026-01-01 15:34:27.00');
+commit;
+
+-- 开启 RLS
+ALTER TABLE "user_role" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "user" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "site" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "manufacturer" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "manufacturer_group_detail" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "manufacturer_group" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "product" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "contract" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "order" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "purchase" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "stock_in" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "stock_out" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "stock" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "statement" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "statement_material_detail" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "statement_other_expenses_item" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "statement_other_expenses_detail" ENABLE ROW LEVEL SECURITY;
+-- 允许匿名/公开访问
+
+CREATE POLICY "Allow public all on user" ON "user" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on user_role" ON "user_role" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public insert on user" ON "user" FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow public all on site" ON "site" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on manufacturer" ON "manufacturer" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on manufacturer_group" ON "manufacturer_group" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on product" ON "product" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on manufacturer_group_detail" ON "manufacturer_group_detail" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on contract" ON "contract" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on order" ON "order" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on purchase" ON "purchase" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on stock_in" ON "stock_in" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on stock_out" ON "stock_out" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on stock" ON "stock" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on statement" ON "statement" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on statement_material_detail" ON "statement_material_detail" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on statement_other_expenses_item" ON "statement_other_expenses_item" FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all on statement_other_expenses_detail" ON "statement_other_expenses_detail" FOR ALL USING (true) WITH CHECK (true);
