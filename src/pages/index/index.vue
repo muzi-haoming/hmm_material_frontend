@@ -1,13 +1,13 @@
 <template>
   <view class="container">
-    <!-- Header -->
+    <!-- 顶部 -->
     <view class="header-bg">
       <view class="title-bar">
         <text class="app-title">HK 综合管理系统</text>
       </view>
     </view>
 
-    <!-- Status Card -->
+    <!-- 状态卡片 -->
     <view class="status-card">
       <view class="status-item">
         <text class="count">0</text>
@@ -23,15 +23,15 @@
       </view>
     </view>
     
-    <!-- Content Area (Empty for now) -->
+    <!-- 内容区域（暂时为空） -->
     <view class="content">
-      <!-- Placeholder content -->
+      <!-- 占位内容 -->
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-// Logic can be added here to fetch status counts
+// 此处可以添加获取状态计数的逻辑
 </script>
 
 <style lang="scss">
@@ -46,7 +46,7 @@
   background: linear-gradient(135deg, #6739b6, #8a4fd3);
   border-bottom-left-radius: 30px;
   border-bottom-right-radius: 30px;
-  padding-top: 60px; /* Status bar height approximation */
+  padding-top: 60px; /* 状态栏高度近似值 */
   box-sizing: border-box;
 }
 

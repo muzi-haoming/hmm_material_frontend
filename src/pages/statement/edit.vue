@@ -159,14 +159,14 @@ const contractIndex = ref(-1);
 const products = ref<Option[]>([]);
 const expenseItems = ref<Option[]>([]);
 
-// Local State for Details
+// 本地详细信息状态
 const materials = ref<any[]>([]);
 const expenses = ref<any[]>([]);
 
 const loading = ref(false);
 const isEdit = ref(false);
 
-// Modal State
+// 模态框状态
 const showMaterialModal = ref(false);
 const tempMaterial = ref({ productIndex: -1, quantity: '', amount: '' });
 
@@ -197,7 +197,7 @@ const fetchOptions = async () => {
 const loadData = async (id: string) => {
   uni.showLoading({ title: '加载中' });
   
-  // 1. Fetch Master
+  // 1. 获取主表信息
   const { data: master } = await supabase
     .from('statement')
     .select('*')
@@ -212,14 +212,14 @@ const loadData = async (id: string) => {
     contractIndex.value = contracts.value.findIndex(c => c.id === master.contract_id);
   }
 
-  // 2. Fetch Materials
+  // 2. 获取物资明细
   const { data: mats } = await supabase
     .from('statement_material_detail')
     .select('*')
     .eq('statement_id', id);
   if (mats) materials.value = mats;
 
-  // 3. Fetch Expenses
+  // 3. 获取其他费用
   const { data: exps } = await supabase
     .from('statement_other_expenses_detail')
     .select('*')
@@ -242,7 +242,7 @@ const bindEndDateChange = (e: any) => {
   form.value.end_time = e.detail.value;
 };
 
-// Material Modal
+// 物资模态框
 const openMaterialModal = () => {
   tempMaterial.value = { productIndex: -1, quantity: '', amount: '' };
   showMaterialModal.value = true;
@@ -261,7 +261,7 @@ const confirmMaterial = () => {
   closeMaterialModal();
 };
 
-// Expense Modal
+// 费用模态框
 const openExpenseModal = () => {
   tempExpense.value = { itemIndex: -1, amount: '' };
   showExpenseModal.value = true;
@@ -298,7 +298,7 @@ const handleDelete = async () => {
     success: async (res) => {
       if (res.confirm) {
         loading.value = true;
-        // Delete Details First
+        // 先删除明细
         await supabase.from('statement_material_detail').delete().eq('statement_id', form.value.id);
         await supabase.from('statement_other_expenses_detail').delete().eq('statement_id', form.value.id);
         const { error } = await supabase.from('statement').delete().eq('id', form.value.id);
@@ -323,7 +323,7 @@ const handleSave = async () => {
 
   loading.value = true;
   
-  // 1. Upsert Master
+  // 1. 更新或插入主表
   const masterPayload = {
     code: form.value.code,
     contract_id: form.value.contract_id,
@@ -346,13 +346,13 @@ const handleSave = async () => {
     if (error) { loading.value = false; return uni.showToast({ title: '保存主表失败' + error.message, icon: 'none' }); }
   }
 
-  // 2. Refresh Details (Delete old -> Insert new)
+  // 2. 刷新明细（删除旧的 -> 插入新的）
   if (isEdit.value) {
     await supabase.from('statement_material_detail').delete().eq('statement_id', statementId);
     await supabase.from('statement_other_expenses_detail').delete().eq('statement_id', statementId);
   }
 
-  // 3. Insert Materials
+  // 3. 插入物资明细
   if (materials.value.length > 0) {
     const matInserts = materials.value.map(m => ({
       id: uuidv4(),
@@ -364,7 +364,7 @@ const handleSave = async () => {
     await supabase.from('statement_material_detail').insert(matInserts);
   }
 
-  // 4. Insert Expenses
+  // 4. 插入其他费用
   if (expenses.value.length > 0) {
     const expInserts = expenses.value.map(e => ({
       id: uuidv4(),

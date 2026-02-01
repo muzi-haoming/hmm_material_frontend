@@ -95,7 +95,7 @@ const loadData = async (id: string) => {
     form.value.manufacturer_id = data.manufacturer_id;
     form.value.quantity = data.quantity;
 
-    // Set Indices
+    // 设置索引
     productIndex.value = products.value.findIndex(p => p.id === data.product_id);
     manufacturerIndex.value = manufacturers.value.findIndex(m => m.id === data.manufacturer_id);
   }
@@ -152,7 +152,7 @@ const handleSave = async () => {
     const { error: updateError } = await supabase.from('stock').update(payload).eq('id', form.value.id);
     error = updateError;
   } else {
-    // Check if stock already exists for this product + manufacturer
+    // 检查该产品和厂家是否已存在库存
     const { data: existing } = await supabase
       .from('stock')
       .select('id')

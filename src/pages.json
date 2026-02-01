@@ -10,15 +10,6 @@
 			}
 		},
 		{
-			"path": "pages/register/register",
-			"style": {
-				"navigationBarTitleText": "注册",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white",
-				"navigationStyle": "custom"
-			}
-		},
-		{
 			"path": "pages/index/index",
 			"style": {
 				"navigationBarTitleText": "首页",
@@ -265,14 +256,6 @@
 			"path": "pages/user/edit",
 			"style": {
 				"navigationBarTitleText": "编辑用户",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/profile/password",
-			"style": {
-				"navigationBarTitleText": "修改密码",
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}

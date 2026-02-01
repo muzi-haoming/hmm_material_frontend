@@ -66,7 +66,7 @@ const form = ref({
   site_id: '',
   manufacturer_group_id: '',
   status: '0',
-  agent_id: '' // Will set to current user later
+  agent_id: '' // 稍后设置为当前用户
 });
 
 const sites = ref<Option[]>([]);
@@ -89,17 +89,17 @@ const isEdit = ref(false);
 onLoad(async (options: any) => {
   await fetchOptions();
   
-  // Set default agent to current user (simple implementation)
+  // 设置默认经办人为当前用户（简单实现）
   const { data: { user } } = await supabase.auth.getUser();
   if (user) {
-    // Need to find matching public.user id for auth.user (or just mock for now if user table not synced with auth)
-    // For now assuming we need a valid ID from public.user table.
-    // In real app, we would fetch the mapped user.
-    // Let's search for a user or create one if this was a real flow.
-    // Simplification: We will just pick the first user from public.user as default agent if we can't map.
+    // 需要找到与 auth.user 匹配的 public.user id（或者如果用户表未与 auth 同步，则仅作模拟）
+    // 目前假设我们需要一个来自 public.user 表的有效 ID。
+    // 在实际应用中，我们会获取映射的用户。
+    // 让我们搜索一个用户，或者如果这是一个真实流程则创建一个。
+    // 简化：如果无法映射，我们将仅选取 public.user 中的第一个用户作为默认经办人。
     const { data: users } = await supabase.from('user').select('id').limit(1);
     if (users && users.length > 0) {
-      form.value.agent_id = users[0].id; // Temporary: assign first user as agent
+      form.value.agent_id = users[0].id; // 临时：指定第一个用户为经办人
     }
   }
 
@@ -111,11 +111,11 @@ onLoad(async (options: any) => {
 });
 
 const fetchOptions = async () => {
-  // Fetch Sites
+  // 获取工地
   const { data: siteData } = await supabase.from('site').select('id, name');
   if (siteData) sites.value = siteData;
 
-  // Fetch Groups
+  // 获取厂家组
   const { data: groupData } = await supabase.from('manufacturer_group').select('id, name');
   if (groupData) groups.value = groupData;
 };
@@ -138,7 +138,7 @@ const loadData = async (id: string) => {
     form.value.status = data.status;
     form.value.agent_id = data.agent_id;
 
-    // Set Indices
+    // 设置索引
     siteIndex.value = sites.value.findIndex(s => s.id === data.site_id);
     groupIndex.value = groups.value.findIndex(g => g.id === data.manufacturer_group_id);
     statusIndex.value = statusOptions.findIndex(o => o.value === data.status);
@@ -190,7 +190,7 @@ const handleSave = async () => {
   if (!form.value.manufacturer_group_id) return uni.showToast({ title: '请选择厂家组', icon: 'none' });
   
   if (!form.value.agent_id) {
-     // Safety check if no agent assigned
+     // 安全检查：如果没有分配经办人
      const { data: users } = await supabase.from('user').select('id').limit(1);
      if (users && users.length > 0) form.value.agent_id = users[0].id;
      else return uni.showToast({ title: '系统未配置用户，无法分配负责人', icon: 'none' });
@@ -201,7 +201,7 @@ const handleSave = async () => {
   let error;
   
   if (isEdit.value) {
-    // Update
+    // 更新
     const { error: updateError } = await supabase
       .from('contract')
       .update({
@@ -216,7 +216,7 @@ const handleSave = async () => {
       .eq('id', form.value.id);
     error = updateError;
   } else {
-    // Insert
+    // 插入
     const { error: insertError } = await supabase
       .from('contract')
       .insert({
@@ -287,11 +287,11 @@ const handleSave = async () => {
     font-size: 15px;
     box-sizing: border-box;
     display: flex;
-    align-items: center; // For text inside picker view
+    align-items: center; // 用于 picker view 内部文字对齐
   }
   
   .picker-view {
-    color: #333; // Default
+    color: #333; // 默认颜色
   }
 }
 

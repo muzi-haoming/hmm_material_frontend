@@ -96,11 +96,11 @@ onLoad(async (options: any) => {
 });
 
 const fetchOptions = async () => {
-  // Fetch Contracts
+  // 获取合同
   const { data: contractData } = await supabase.from('contract').select('id, name');
   if (contractData) contracts.value = contractData;
 
-  // Fetch Products
+  // 获取产品
   const { data: productData } = await supabase.from('product').select('id, name');
   if (productData) products.value = productData;
 };
@@ -122,7 +122,7 @@ const loadData = async (id: string) => {
     form.value.quantity = data.quantity;
     form.value.status = data.status;
 
-    // Set Indices
+    // 设置索引
     contractIndex.value = contracts.value.findIndex(c => c.id === data.contract_id);
     productIndex.value = products.value.findIndex(p => p.id === data.product_id);
     statusIndex.value = statusOptions.findIndex(o => o.value === data.status);
@@ -186,14 +186,14 @@ const handleSave = async () => {
   };
   
   if (isEdit.value) {
-    // Update
+    // 更新
     const { error: updateError } = await supabase
       .from('order')
       .update(payload)
       .eq('id', form.value.id);
     error = updateError;
   } else {
-    // Insert
+    // 插入
     // @ts-ignore
     payload.id = uuidv4();
     const { error: insertError } = await supabase
@@ -258,11 +258,11 @@ const handleSave = async () => {
     font-size: 15px;
     box-sizing: border-box;
     display: flex;
-    align-items: center; // For text inside picker view
+    align-items: center; // 用于 picker view 内部文字对齐
   }
   
   .picker-view {
-    color: #333; // Default
+    color: #333; // 默认颜色
   }
 }
 

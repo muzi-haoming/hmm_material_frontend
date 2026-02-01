@@ -105,7 +105,7 @@ const isEdit = ref(false);
 onLoad(async (options: any) => {
   await fetchOptions();
   
-  // Default purchaser
+  // 默认采购人
   const { data: { user } } = await supabase.auth.getUser();
   if (user) {
      const { data: users } = await supabase.from('user').select('id').limit(1);
@@ -150,7 +150,7 @@ const loadData = async (id: string) => {
     form.value.quantity = data.quantity;
     form.value.amount = data.amount;
 
-    // Set Indices
+    // 设置索引
     orderIndex.value = orders.value.findIndex(o => o.id === data.order_id);
     productIndex.value = products.value.findIndex(p => p.id === data.product_id);
     payerIndex.value = manufacturers.value.findIndex(m => m.id === data.payer_manufacturer_id);

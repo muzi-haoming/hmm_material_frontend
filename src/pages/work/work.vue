@@ -16,7 +16,7 @@
           :class="{ active: currentTab === 0 }"
           @click="currentTab = 0"
         >
-          <!-- <text class="iconfont icon-file"></text> Removed broken icon -->
+          <!-- <text class="iconfont icon-file"></text> 移除损坏的图标 -->
           <text>基础信息</text>
         </view>
         <view 
@@ -24,15 +24,15 @@
           :class="{ active: currentTab === 1 }"
           @click="currentTab = 1"
         >
-          <!-- <text class="iconfont icon-chart"></text> Removed broken icon -->
+          <!-- <text class="iconfont icon-chart"></text> 移除损坏的图标 -->
           <text>业务数据</text>
         </view>
         
-        <!-- Active Indicator -->
+        <!-- 活动指示器 -->
         <view class="indicator" :style="{ left: currentTab === 0 ? '25%' : '75%' }"></view>
       </view>
 
-      <!-- Grid Content -->
+      <!-- 网格内容 -->
       <view class="grid-content">
         <view 
           class="grid-item" 
@@ -40,7 +40,7 @@
           :key="index"
           @click="handleGridClick(item)"
         >
-          <view class="icon-circle" :style="{ backgroundColor: '#999' }"> <!-- Grey placeholder icons -->
+          <view class="icon-circle" :style="{ backgroundColor: '#999' }"> <!-- 灰色占位图标 -->
             <text class="icon-text">{{ item.iconChar }}</text>
           </view>
           <text class="grid-label">{{ item.label }}</text>
@@ -171,7 +171,7 @@ const handleGridClick = (item: { label: string, iconChar: string }) => {
   bottom: 0;
   width: 20%;
   height: 3px;
-  background-color: #6739b6; /* Purple indicator */
+  background-color: #6739b6; /* 紫色指示器 */
   transition: all 0.3s ease;
   transform: translateX(-50%);
 }
@@ -182,7 +182,7 @@ const handleGridClick = (item: { label: string, iconChar: string }) => {
 }
 
 .grid-item {
-  width: 25%; /* 4 items per row */
+  width: 25%; /* 每行 4 个项目 */
   display: flex;
   flex-direction: column;
   align-items: center;

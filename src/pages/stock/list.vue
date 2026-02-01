@@ -62,7 +62,7 @@ const loading = ref(false);
 
 const fetchData = async () => {
   loading.value = true;
-  // Join product and manufacturer tables
+  // 关联产品和厂家表
   let query = supabase
     .from('stock')
     .select('*, product:product_id(name), manufacturer:manufacturer_id(name)');
@@ -73,7 +73,7 @@ const fetchData = async () => {
     console.error('Error fetching stock:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } else {
-    // Map names
+    // 映射名称
     list.value = (data || []).map((item: any) => ({
       ...item,
       product_name: item.product?.name,

@@ -87,7 +87,7 @@ const form = ref({
 
 const allManufacturers = ref<Manufacturer[]>([]);
 const selectedManufacturerIds = ref<string[]>([]);
-const tempSelectedIds = ref<string[]>([]); // For modal interaction
+const tempSelectedIds = ref<string[]>([]); // 用于模态框交互
 const showModal = ref(false);
 
 const loading = ref(false);
@@ -121,7 +121,7 @@ const fetchAllManufacturers = async () => {
 const loadData = async (id: string) => {
   uni.showLoading({ title: '加载中' });
   
-  // Load Group Info
+  // 加载厂家组信息
   const { data: groupData, error: groupError } = await supabase
     .from('manufacturer_group')
     .select('*')
@@ -133,7 +133,7 @@ const loadData = async (id: string) => {
     form.value.code = groupData.code;
   }
 
-  // Load Details
+  // 加载明细
   const { data: detailData, error: detailError } = await supabase
     .from('manufacturer_group_detail')
     .select('manufacturer_id')
@@ -183,10 +183,10 @@ const handleDelete = async () => {
     success: async (res) => {
       if (res.confirm) {
         loading.value = true;
-        // 1. Delete Details (RLS might require explicit delete or cascade, assuming explicit here for safety)
+        // 1. 删除明细（RLS 可能需要显式删除或级联，这里为了安全起见显式删除）
         await supabase.from('manufacturer_group_detail').delete().eq('manufacturer_group_id', form.value.id);
         
-        // 2. Delete Group
+        // 2. 删除厂家组
         const { error } = await supabase.from('manufacturer_group').delete().eq('id', form.value.id);
         
         loading.value = false;
@@ -214,7 +214,7 @@ const handleSave = async () => {
   let error;
   
   if (isEdit.value) {
-    // Update Group
+    // 更新厂家组
     const { error: updateError } = await supabase
       .from('manufacturer_group')
       .update({
@@ -225,7 +225,7 @@ const handleSave = async () => {
       .eq('id', groupId);
     error = updateError;
   } else {
-    // Insert Group
+    // 插入厂家组
     groupId = uuidv4();
     const { error: insertError } = await supabase
       .from('manufacturer_group')
@@ -238,8 +238,8 @@ const handleSave = async () => {
   }
 
   if (!error) {
-    // Sync Details: Delete all old, Insert all new
-    // 1. Delete existing details
+    // 同步明细：删除所有旧的，插入所有新的
+    // 1. 删除现有明细
     if (isEdit.value) {
       await supabase
         .from('manufacturer_group_detail')
@@ -247,7 +247,7 @@ const handleSave = async () => {
         .eq('manufacturer_group_id', groupId);
     }
     
-    // 2. Insert new details
+    // 2. 插入新明细
     if (selectedManufacturerIds.value.length > 0) {
       const detailsToInsert = selectedManufacturerIds.value.map(mid => ({
         id: uuidv4(),
@@ -460,7 +460,7 @@ const handleSave = async () => {
 .modal-body {
   flex: 1;
   padding: 10px;
-  max-height: 400px; // fallback
+  max-height: 400px; // 备用高度
 }
 
 .check-item {

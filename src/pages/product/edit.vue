@@ -118,7 +118,7 @@ const handleSave = async () => {
   let error;
   
   if (isEdit.value) {
-    // Update
+    // 更新
     const { error: updateError } = await supabase
       .from('product')
       .update({
@@ -131,7 +131,7 @@ const handleSave = async () => {
       .eq('id', form.value.id);
     error = updateError;
   } else {
-    // Insert
+    // 插入
     const { error: insertError } = await supabase
       .from('product')
       .insert({

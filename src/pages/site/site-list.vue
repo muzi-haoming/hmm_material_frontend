@@ -1,6 +1,6 @@
 <template>
   <view class="container">
-    <!-- Search Bar -->
+    <!-- 搜索栏 -->
     <view class="search-bar">
       <view class="search-input-box">
         <text class="iconfont icon-search"></text>
@@ -15,7 +15,7 @@
       </view>
     </view>
 
-    <!-- List -->
+    <!-- 列表 -->
     <view class="list-container">
       <view 
         class="list-item" 
@@ -32,13 +32,13 @@
         </view>
       </view>
       
-      <!-- Empty State -->
+      <!-- 空状态 -->
       <view v-if="list.length === 0 && !loading" class="empty-state">
         <text>暂无数据</text>
       </view>
     </view>
 
-    <!-- FAB Add Button -->
+    <!-- 悬浮添加按钮 -->
     <view class="fab-add" @click="goAdd">
       <text class="plus">+</text>
     </view>

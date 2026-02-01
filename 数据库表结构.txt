@@ -1,5 +1,5 @@
 drop table if exists public.user_role cascade;
-drop table if exists public.user cascade;
+drop table if exists public.profile cascade;
 drop table if exists public.site cascade;
 drop table if exists public.product cascade;
 drop table if exists public.manufacturer cascade;
@@ -15,171 +15,203 @@ drop table if exists public.statement cascade;
 drop table if exists public.statement_material_detail cascade;
 drop table if exists public.statement_other_expenses_item cascade;
 drop table if exists public.statement_other_expenses_detail cascade;
+drop function if exists public.update_modified_column cascade;
 commit;
+
+-- 定义自动更新时间戳的函数
+create or replace function update_modified_column()
+returns trigger as $$
+begin
+    new.update_time = current_timestamp;
+    return new;
+end;
+$$ language 'plpgsql';
 
 create table "user_role" (
-                             "id" char(36) primary key,
-                             "code" varchar(50) not null,
-                             "name" varchar(200) not null
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_user_role_modtime before update on "user_role" for each row execute procedure update_modified_column();
 
-create table "user" (
-                        "id" char(36) primary key,
-                        "name" varchar(200) not null,
-                        "username" varchar(50) not null,
-                        "password" varchar(32) not null,
-                        "role_id" char(36) not null,
-                        "wx_openid" text,
-                        "create_time" timestamp not null default 'now()',
-                        "update_time" timestamp not null default 'now()'
+create table "profile" (
+    "id" uuid primary key references auth.users(id) on delete cascade,
+    "name" text not null,
+    "role_id" uuid not null,
+    "openid" text,
+    "avatar_url" text,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_profile_modtime before update on "profile" for each row execute procedure update_modified_column();
 
 create table "site" (
-                        "id" char(36) primary key,
-                        "code" varchar(50) not null,
-                        "name" varchar(200) not null,
-                        "create_time" timestamp not null default 'now()',
-                        "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_site_modtime before update on "site" for each row execute procedure update_modified_column();
 
 create table "product" (
-                           "id" char(36) primary key,
-                           "code" varchar(50) not null,
-                           "name" varchar(200) not null,
-                           "unit" varchar(20) not null,
-                           "price" numeric(19,4),
-                           "create_time" timestamp not null default 'now()',
-                           "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "unit" text not null,
+    "price" numeric(19,4),
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_product_modtime before update on "product" for each row execute procedure update_modified_column();
 
 create table "manufacturer" (
-                                "id" char(36) primary key,
-                                "code" varchar(50) not null,
-                                "name" varchar(200) not null,
-                                "create_time" timestamp not null default 'now()',
-                                "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_manufacturer_modtime before update on "manufacturer" for each row execute procedure update_modified_column();
 
 create table "manufacturer_group" (
-                                      "id" char(36) primary key,
-                                      "code" varchar(50) not null,
-                                      "name" varchar(200) not null,
-                                      "create_time" timestamp not null default 'now()',
-                                      "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_manufacturer_group_modtime before update on "manufacturer_group" for each row execute procedure update_modified_column();
 
 create table "stock" (
-                         "id" char(36) primary key,
-                         "manufacturer_id" char(36) not null,
-                         "product_id" char(36) not null,
-                         "quantity" numeric(19,4) not null
+    "id" uuid primary key default uuid_generate_v4(),
+    "manufacturer_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_stock_modtime before update on "stock" for each row execute procedure update_modified_column();
 
 create table "manufacturer_group_detail" (
-                                             "id" char(36) primary key,
-                                             "manufacturer_group_id" char(36) not null,
-                                             "manufacturer_id" char(36) not null
+    "id" uuid primary key default uuid_generate_v4(),
+    "manufacturer_group_id" uuid not null,
+    "manufacturer_id" uuid not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_manufacturer_group_detail_modtime before update on "manufacturer_group_detail" for each row execute procedure update_modified_column();
 
 create table "contract" (
-                            "id" char(36) primary key,
-                            "code" varchar(100) not null,
-                            "name" varchar(200) not null,
-                            "site_id" char(36) not null,
-                            "manufacturer_group_id" char(36) not null,
-                            "agent_id" char(36) not null,
-                            "status" char(1) not null,
-                            "create_time" timestamp not null default 'now()',
-                            "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "site_id" uuid not null,
+    "manufacturer_group_id" uuid not null,
+    "agent_id" uuid not null,
+    "status" char(1) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_contract_modtime before update on "contract" for each row execute procedure update_modified_column();
 
 create table "order" (
-                         "id" char(36) primary key,
-                         "code" varchar(50) not null,
-                         "contract_id" char(36) not null,
-                         "product_id" char(36) not null,
-                         "quantity" numeric(19,4) not null,
-                         "status" char(1) not null,
-                         "create_time" timestamp not null default 'now()',
-                         "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "contract_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "status" char(1) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_order_modtime before update on "order" for each row execute procedure update_modified_column();
 
 create table "stock_out" (
-                             "id" char(36) primary key,
-                             "code" varchar(50) not null,
-                             "order_id" char(36) not null,
-                             "manufacturer_id" char(36) not null,
-                             "product_id" char(36) not null,
-                             "quantity" numeric(19,4) not null,
-                             "create_time" timestamp not null default 'now()',
-                             "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "order_id" uuid not null,
+    "manufacturer_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_stock_out_modtime before update on "stock_out" for each row execute procedure update_modified_column();
 
 create table "stock_in" (
-                            "id" char(36) primary key,
-                            "code" varchar(50) not null,
-                            "order_id" char(36) not null,
-                            "product_id" char(36) not null,
-                            "quantity" numeric(19,4) not null,
-                            "create_time" timestamp not null default 'now()',
-                            "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "order_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_stock_in_modtime before update on "stock_in" for each row execute procedure update_modified_column();
 
 create table "purchase" (
-                            "id" char(36) primary key,
-                            "code" varchar(50) not null,
-                            "order_id" char(36) not null,
-                            "purchaser" char(36) not null,
-                            "payer_manufacturer_id" char(36) not null,
-                            "payee_manufacturer_id" char(36) not null,
-                            "product_id" char(36) not null,
-                            "quantity" numeric(19,4) not null,
-                            "amount" numeric(19,4) not null,
-                            "create_time" timestamp not null default 'now()',
-                            "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "order_id" uuid not null,
+    "purchaser" uuid not null,
+    "payer_manufacturer_id" uuid not null,
+    "payee_manufacturer_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "amount" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_purchase_modtime before update on "purchase" for each row execute procedure update_modified_column();
 
 create table "statement" (
-                             "id" char(36) primary key,
-                             "code" varchar(50) not null,
-                             "contract_id" char(36) not null,
-                             "start_time" timestamp not null,
-                             "end_time" timestamp not null,
-                             "create_time" timestamp not null default 'now()',
-                             "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "contract_id" uuid not null,
+    "start_time" timestamp not null,
+    "end_time" timestamp not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_statement_modtime before update on "statement" for each row execute procedure update_modified_column();
 
 create table "statement_material_detail" (
-                                             "id" char(36) primary key,
-                                             "statement_id" char(36) not null,
-                                             "product_id" char(36) not null,
-                                             "quantity" numeric(19,4) not null,
-                                             "amount" numeric(19,4) not null,
-                                             "create_time" timestamp not null default 'now()',
-                                             "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "statement_id" uuid not null,
+    "product_id" uuid not null,
+    "quantity" numeric(19,4) not null,
+    "amount" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_statement_material_detail_modtime before update on "statement_material_detail" for each row execute procedure update_modified_column();
 
 create table "statement_other_expenses_item" (
-                                                 "id" char(36) primary key,
-                                                 "code" varchar(50) not null,
-                                                 "name" varchar(200) not null,
-                                                 "create_time" timestamp not null default 'now()',
-                                                 "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "code" text not null,
+    "name" text not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_statement_other_expenses_item_modtime before update on "statement_other_expenses_item" for each row execute procedure update_modified_column();
 
 create table "statement_other_expenses_detail" (
-                                                   "id" char(36) primary key,
-                                                   "statement_id" char(36) not null,
-                                                   "item_id" char(36) not null,
-                                                   "amount" numeric(19,4) not null,
-                                                   "create_time" timestamp not null default 'now()',
-                                                   "update_time" timestamp not null default 'now()'
+    "id" uuid primary key default uuid_generate_v4(),
+    "statement_id" uuid not null,
+    "item_id" uuid not null,
+    "amount" numeric(19,4) not null,
+    "create_time" timestamp not null default current_timestamp,
+    "update_time" timestamp not null default current_timestamp
 );
+create trigger update_statement_other_expenses_detail_modtime before update on "statement_other_expenses_detail" for each row execute procedure update_modified_column();
+
 commit;
 
+-- 唯一索引
 create unique index on "user_role" ("code");
-create unique index on "user" ("username");
-create unique index on "user" ("wx_openid");
 create unique index on "site" ("code");
 create unique index on "product" ("code");
 create unique index on "manufacturer" ("code");
@@ -191,8 +223,10 @@ create unique index on "stock_out" ("code");
 create unique index on "purchase" ("code");
 create unique index on "statement" ("code");
 create unique index on "statement_other_expenses_item" ("code");
+
+-- 表注释
 comment on table "user_role" is '用户角色';
-comment on table "user" is '用户';
+comment on table "profile" is '用户资料 (关联 supabase auth)';
 comment on table "site" is '工地';
 comment on table "product" is '产品';
 comment on table "manufacturer" is '厂家';
@@ -208,14 +242,16 @@ comment on table "statement" is '结算单';
 comment on table "statement_material_detail" is '结算单物资明细';
 comment on table "statement_other_expenses_item" is '结算单其他费用项';
 comment on table "statement_other_expenses_detail" is '结算单其他费用明细';
-alter table "user" add foreign key ("role_id") references "user_role" ("id");
+
+-- 外键
+alter table "profile" add foreign key ("role_id") references "user_role" ("id");
 alter table "stock" add foreign key ("manufacturer_id") references "manufacturer" ("id");
 alter table "stock" add foreign key ("product_id") references "product" ("id");
 alter table "manufacturer_group_detail" add foreign key ("manufacturer_group_id") references "manufacturer_group" ("id");
 alter table "manufacturer_group_detail" add foreign key ("manufacturer_id") references "manufacturer" ("id");
 alter table "contract" add foreign key ("site_id") references "site" ("id");
 alter table "contract" add foreign key ("manufacturer_group_id") references "manufacturer_group" ("id");
-alter table "contract" add foreign key ("agent_id") references "user" ("id");
+alter table "contract" add foreign key ("agent_id") references "profile" ("id");
 alter table "order" add foreign key ("contract_id") references "contract" ("id");
 alter table "order" add foreign key ("product_id") references "product" ("id");
 alter table "stock_out" add foreign key ("order_id") references "order" ("id");
@@ -224,7 +260,7 @@ alter table "stock_out" add foreign key ("product_id") references "product" ("id
 alter table "stock_in" add foreign key ("order_id") references "order" ("id");
 alter table "stock_in" add foreign key ("product_id") references "product" ("id");
 alter table "purchase" add foreign key ("order_id") references "order" ("id");
-alter table "purchase" add foreign key ("purchaser") references "user" ("id");
+alter table "purchase" add foreign key ("purchaser") references "profile" ("id");
 alter table "purchase" add foreign key ("payer_manufacturer_id") references "manufacturer" ("id");
 alter table "purchase" add foreign key ("payee_manufacturer_id") references "manufacturer" ("id");
 alter table "purchase" add foreign key ("product_id") references "product" ("id");
@@ -235,46 +271,79 @@ alter table "statement_other_expenses_detail" add foreign key ("statement_id") r
 alter table "statement_other_expenses_detail" add foreign key ("item_id") references "statement_other_expenses_item" ("id");
 commit;
 
-insert into user_role values ('a0632c3a-7d43-4924-a9fc-a1d9c9b86af7', 'admin', '管理员');
-insert into user_role values ('f4457900-0841-4478-8f13-9695ca9c5b3f', 'user', '用户');
-insert into "user" values ('5ea0fc66-0946-4a48-bc99-8c85fdf0f8e0', '李拓', 'admin', 'e10adc3949ba59abbe56e057f20f883e', 'a0632c3a-7d43-4924-a9fc-a1d9c9b86af7', '2026-01-01 00:00:00.00', '2026-01-01 15:34:27.00');
+-- 初始化数据
+insert into user_role (id, code, name) values ('a0632c3a-7d43-4924-a9fc-a1d9c9b86af7', 'admin', '管理员');
+insert into user_role (id, code, name) values ('f4457900-0841-4478-8f13-9695ca9c5b3f', 'user', '用户');
 commit;
 
--- 开启 RLS
-ALTER TABLE "user_role" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "user" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "site" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "manufacturer" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "manufacturer_group_detail" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "manufacturer_group" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "product" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "contract" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "order" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "purchase" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "stock_in" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "stock_out" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "stock" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "statement" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "statement_material_detail" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "statement_other_expenses_item" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "statement_other_expenses_detail" ENABLE ROW LEVEL SECURITY;
--- 允许匿名/公开访问
+-- 行级安全策略 (rls)
+alter table "user_role" enable row level security;
+create policy "allow public all on user_role" on "user_role" for all using (true) with check (true);
 
-CREATE POLICY "Allow public all on user" ON "user" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on user_role" ON "user_role" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public insert on user" ON "user" FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow public all on site" ON "site" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on manufacturer" ON "manufacturer" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on manufacturer_group" ON "manufacturer_group" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on product" ON "product" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on manufacturer_group_detail" ON "manufacturer_group_detail" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on contract" ON "contract" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on order" ON "order" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on purchase" ON "purchase" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on stock_in" ON "stock_in" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on stock_out" ON "stock_out" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on stock" ON "stock" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on statement" ON "statement" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on statement_material_detail" ON "statement_material_detail" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on statement_other_expenses_item" ON "statement_other_expenses_item" FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all on statement_other_expenses_detail" ON "statement_other_expenses_detail" FOR ALL USING (true) WITH CHECK (true);
+alter table "profile" enable row level security;
+create policy "allow public all on profile" on "profile" for all using (true) with check (true);
+
+alter table "site" enable row level security;
+create policy "allow public all on site" on "site" for all using (true) with check (true);
+
+alter table "manufacturer" enable row level security;
+create policy "allow public all on manufacturer" on "manufacturer" for all using (true) with check (true);
+
+alter table "manufacturer_group_detail" enable row level security;
+create policy "allow public all on manufacturer_group_detail" on "manufacturer_group_detail" for all using (true) with check (true);
+
+alter table "manufacturer_group" enable row level security;
+create policy "allow public all on manufacturer_group" on "manufacturer_group" for all using (true) with check (true);
+
+alter table "product" enable row level security;
+create policy "allow public all on product" on "product" for all using (true) with check (true);
+
+alter table "contract" enable row level security;
+create policy "allow public all on contract" on "contract" for all using (true) with check (true);
+
+alter table "order" enable row level security;
+create policy "allow public all on order" on "order" for all using (true) with check (true);
+
+alter table "purchase" enable row level security;
+create policy "allow public all on purchase" on "purchase" for all using (true) with check (true);
+
+alter table "stock_in" enable row level security;
+create policy "allow public all on stock_in" on "stock_in" for all using (true) with check (true);
+
+alter table "stock_out" enable row level security;
+create policy "allow public all on stock_out" on "stock_out" for all using (true) with check (true);
+
+alter table "stock" enable row level security;
+create policy "allow public all on stock" on "stock" for all using (true) with check (true);
+
+alter table "statement" enable row level security;
+create policy "allow public all on statement" on "statement" for all using (true) with check (true);
+
+alter table "statement_material_detail" enable row level security;
+create policy "allow public all on statement_material_detail" on "statement_material_detail" for all using (true) with check (true);
+
+alter table "statement_other_expenses_item" enable row level security;
+create policy "allow public all on statement_other_expenses_item" on "statement_other_expenses_item" for all using (true) with check (true);
+
+alter table "statement_other_expenses_detail" enable row level security;
+create policy "allow public all on statement_other_expenses_detail" on "statement_other_expenses_detail" for all using (true) with check (true);
+
+-- 1. 创建名为 'avatars' 的公开存储桶
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true) on conflict (id) do nothing;
+-- 2. 设置存储桶策略 (rls)
+-- 策略：允许所有人查看头像 (public access)
+create policy "avatar public view" on storage.objects for
+select using (bucket_id = 'avatars');
+-- 策略：允许经过身份验证的用户上传头像
+create policy "authenticated upload" on storage.objects for
+insert with check (
+	bucket_id = 'avatars'
+	and auth.role() = 'authenticated'
+);
+-- 策略：允许用户更新自己的头像 (可选，通常上传新文件即可)
+create policy "authenticated update" on storage.objects for
+update with check (
+	bucket_id = 'avatars'
+	and auth.role() = 'authenticated'
+);

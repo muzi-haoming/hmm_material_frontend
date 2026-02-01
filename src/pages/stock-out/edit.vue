@@ -122,7 +122,7 @@ const loadData = async (id: string) => {
     form.value.product_id = data.product_id;
     form.value.quantity = data.quantity;
 
-    // Set Indices
+    // 设置索引
     orderIndex.value = orders.value.findIndex(o => o.id === data.order_id);
     manufacturerIndex.value = manufacturers.value.findIndex(m => m.id === data.manufacturer_id);
     productIndex.value = products.value.findIndex(p => p.id === data.product_id);

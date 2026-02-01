@@ -79,7 +79,7 @@ const fetchData = async () => {
     console.error('Error fetching statement:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } else {
-    // Map contract name
+    // 映射合同名称
     list.value = (data || []).map((item: any) => ({
       ...item,
       contract_name: item.contract?.name
@@ -111,15 +111,15 @@ const handleDelete = async (id: string) => {
     content: '删除对账单将同时删除关联明细，确定吗？',
     success: async (res) => {
       if (res.confirm) {
-        // Cascade delete should ideally be handled by DB foreign keys, but we can do it here explicitly to be safe if cascade isn't set up
-        // Assuming cascade is ON in DB, or we delete children first.
-        // Given we don't control DB schema strictly here, let's try delete parent. If constraint fails, we delete children first.
+        // 级联删除最好由数据库外键处理，但如果没有设置级联，我们可以为了安全起见在这里显式处理
+        // 假设数据库中开启了级联，或者我们先删除子项。
+        // 鉴于我们这里不严格控制数据库模式，让我们尝试先删除父项。如果约束失败，我们再删除子项。
         
-        // Try Delete Parent
+        // 尝试删除父项
         const { error } = await supabase.from('statement').delete().eq('id', id);
         
         if (error) {
-          // If foreign key constraint fails, delete children first (manual cascade)
+          // 如果外键约束失败，先删除子项（手动级联）
            await supabase.from('statement_material_detail').delete().eq('statement_id', id);
            await supabase.from('statement_other_expenses_detail').delete().eq('statement_id', id);
            const { error: retryError } = await supabase.from('statement').delete().eq('id', id);
