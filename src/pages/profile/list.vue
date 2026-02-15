@@ -8,11 +8,11 @@
         @click="goEdit(item.id)"
       >
         <view class="item-content">
-          <text class="item-name">{{ item.name }} ({{ item.username }})</text>
+          <text class="item-name">{{ item.name }} ({{ item.nickname }})</text>
           <text class="item-detail">角色: {{ item.role_name || '未分配' }}</text>
         </view>
         <view class="item-arrow">
-          <text class="iconfont icon-right">></text>
+          <text class="iconfont icon-right"></text>
         </view>
       </view>
     </view>
@@ -24,21 +24,23 @@ import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
 
-interface User {
+interface Profile {
   id: string;
-  username: string;
+  nickname: string;
   name: string;
   role_id: string;
   role_name?: string;
+  avatar_url?: string;
 }
 
-const list = ref<User[]>([]);
+const list = ref<Profile[]>([]);
 const loading = ref(false);
 
 const fetchData = async () => {
   loading.value = true;
+  // Refactored: Query from 'profile' table instead of 'user'
   const { data, error } = await supabase
-    .from('user')
+    .from('profile')
     .select('*, user_role:role_id(name)')
     .order('create_time', { ascending: false });
   
@@ -54,7 +56,8 @@ const fetchData = async () => {
 };
 
 const goEdit = (id: string) => {
-  uni.navigateTo({ url: `/pages/user/edit?id=${id}` });
+  // Refactored: Navigate to 'profile/edit'
+  uni.navigateTo({ url: `/pages/profile/edit?id=${id}` });
 };
 
 onShow(() => {

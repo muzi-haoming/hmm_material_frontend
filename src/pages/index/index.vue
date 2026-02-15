@@ -3,7 +3,7 @@
     <!-- 顶部 -->
     <view class="header-bg">
       <view class="title-bar">
-        <text class="app-title">HK 综合管理系统</text>
+        <text class="app-title">恒堃科技</text>
       </view>
     </view>
 

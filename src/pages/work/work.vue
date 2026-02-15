@@ -3,7 +3,7 @@
     <!-- Header -->
     <view class="header-bg">
       <view class="title-bar">
-        <text class="app-title">HK 综合管理系统</text>
+        <text class="app-title">恒堃科技</text>
       </view>
     </view>
 
@@ -77,7 +77,7 @@ const currentGridData = computed(() => currentTab.value === 0 ? baseData : busin
 
 const handleGridClick = (item: { label: string, iconChar: string }) => {
   if (item.label === '工地信息') {
-    uni.navigateTo({ url: '/pages/site/site-list' });
+    uni.navigateTo({ url: '/pages/site/list' });
   } else if (item.label === '厂家信息') {
     uni.navigateTo({ url: '/pages/manufacturer/list' });
   } else if (item.label === '厂家组') {

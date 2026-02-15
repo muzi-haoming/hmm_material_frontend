@@ -30,20 +30,45 @@
       </view>
 
       <view class="form-item">
-        <text class="label required">状态</text>
-        <picker @change="bindStatusChange" :value="statusIndex" :range="statusOptions" range-key="label">
+        <text class="label required">代理人</text>
+        <picker v-if="isAdmin" @change="bindAgentChange" :value="agentIndex" :range="agents" range-key="name">
           <view class="input picker-view">
-            {{ statusOptions[statusIndex] ? statusOptions[statusIndex].label : '请选择状态' }}
+            {{ agents[agentIndex] ? agents[agentIndex].name : '请选择代理人' }}
           </view>
         </picker>
+        <view v-else class="input disabled">
+           {{ getAgentName(form.agent_id) }}
+        </view>
       </view>
     </view>
 
     <view class="footer">
-      <button class="btn-delete" v-if="isEdit" @click="handleDelete" :disabled="loading">删除</button>
-      <button class="btn-save" @click="handleSave" :disabled="loading">
-        {{ loading ? '保存中...' : '保存' }}
-      </button>
+      <!-- 新增模式 -->
+      <template v-if="!isEdit">
+        <button class="btn-save" @click="handleSave(false)" :disabled="loading">保存</button>
+        <button class="btn-primary" @click="handleSave(true)" :disabled="loading">保存并确认</button>
+      </template>
+
+      <!-- 编辑模式 -->
+      <template v-else>
+        <!-- 未确认 + 未封存 -->
+        <template v-if="!form.is_confirmed && !form.is_archived">
+          <button class="btn-delete" @click="handleDelete" :disabled="loading">删除</button>
+          <button class="btn-save" @click="handleSave(false)" :disabled="loading">保存</button>
+          <button class="btn-primary" @click="handleConfirm" :disabled="loading">确认</button>
+        </template>
+
+        <!-- 已确认 + 未封存 -->
+        <template v-if="form.is_confirmed && !form.is_archived">
+          <button class="btn-warning" @click="handleCancelConfirm" :disabled="loading">取消确认</button>
+          <button v-if="isAdmin" class="btn-danger" @click="handleArchive" :disabled="loading">封存</button>
+        </template>
+
+        <!-- 已确认 + 已封存 -->
+        <template v-if="form.is_confirmed && form.is_archived">
+          <button v-if="isAdmin" class="btn-primary" @click="handleReactivate" :disabled="loading">重新启用</button>
+        </template>
+      </template>
     </view>
   </view>
 </template>
@@ -52,7 +77,7 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onLoad } from '@dcloudio/uni-app';
-import { v4 as uuidv4 } from 'uuid';
+
 
 interface Option {
   id: string;
@@ -65,7 +90,8 @@ const form = ref({
   code: '',
   site_id: '',
   manufacturer_group_id: '',
-  status: '0',
+  is_confirmed: false,
+  is_archived: false,
   agent_id: '' // 稍后设置为当前用户
 });
 
@@ -75,33 +101,17 @@ const siteIndex = ref(-1);
 const groups = ref<Option[]>([]);
 const groupIndex = ref(-1);
 
-const statusOptions = [
-  { label: '待签订', value: '0' },
-  { label: '已签订', value: '1' },
-  { label: '已完成', value: '2' },
-  { label: '已终止', value: '3' }
-];
-const statusIndex = ref(0);
+const agents = ref<Option[]>([]);
+const agentIndex = ref(-1);
+const isAdmin = ref(false);
+const currentUserId = ref('');
 
 const loading = ref(false);
 const isEdit = ref(false);
 
 onLoad(async (options: any) => {
   await fetchOptions();
-  
-  // 设置默认经办人为当前用户（简单实现）
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) {
-    // 需要找到与 auth.user 匹配的 public.user id（或者如果用户表未与 auth 同步，则仅作模拟）
-    // 目前假设我们需要一个来自 public.user 表的有效 ID。
-    // 在实际应用中，我们会获取映射的用户。
-    // 让我们搜索一个用户，或者如果这是一个真实流程则创建一个。
-    // 简化：如果无法映射，我们将仅选取 public.user 中的第一个用户作为默认经办人。
-    const { data: users } = await supabase.from('user').select('id').limit(1);
-    if (users && users.length > 0) {
-      form.value.agent_id = users[0].id; // 临时：指定第一个用户为经办人
-    }
-  }
+  await fetchCurrentUser();
 
   if (options.id) {
     isEdit.value = true;
@@ -118,6 +128,10 @@ const fetchOptions = async () => {
   // 获取厂家组
   const { data: groupData } = await supabase.from('manufacturer_group').select('id, name');
   if (groupData) groups.value = groupData;
+  
+  // 获取所有用户作为潜在经办人
+  const { data: agentData } = await supabase.from('profile').select('id, name');
+  if (agentData) agents.value = agentData;
 };
 
 const loadData = async (id: string) => {
@@ -135,13 +149,41 @@ const loadData = async (id: string) => {
     form.value.code = data.code;
     form.value.site_id = data.site_id;
     form.value.manufacturer_group_id = data.manufacturer_group_id;
-    form.value.status = data.status;
+    form.value.is_confirmed = data.is_confirmed;
+    form.value.is_archived = data.is_archived;
     form.value.agent_id = data.agent_id;
 
     // 设置索引
     siteIndex.value = sites.value.findIndex(s => s.id === data.site_id);
     groupIndex.value = groups.value.findIndex(g => g.id === data.manufacturer_group_id);
-    statusIndex.value = statusOptions.findIndex(o => o.value === data.status);
+    
+    // 如果是编辑模式，确保 agentIndex 正确
+    if (agents.value.length > 0) {
+      agentIndex.value = agents.value.findIndex(a => a.id === data.agent_id);
+    }
+  }
+};
+
+const fetchCurrentUser = async () => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profile')
+      .select('id, name, role:role_id(code)')
+      .eq('id', user.id)
+      .single();
+      
+    if (profile) {
+      currentUserId.value = profile.id;
+      // @ts-ignore
+      const roleCode = profile.role?.code;
+      isAdmin.value = roleCode === 'admin';
+      
+      // 如果不是管理员且是新增模式，或者虽然是编辑模式但没有经办人，默认设为自己
+      if (!isAdmin.value || !form.value.agent_id) {
+        form.value.agent_id = profile.id;
+      }
+    }
   }
 };
 
@@ -155,9 +197,15 @@ const bindGroupChange = (e: any) => {
   form.value.manufacturer_group_id = groups.value[groupIndex.value].id;
 };
 
-const bindStatusChange = (e: any) => {
-  statusIndex.value = e.detail.value;
-  form.value.status = statusOptions[statusIndex.value].value;
+const bindAgentChange = (e: any) => {
+  agentIndex.value = e.detail.value;
+  form.value.agent_id = agents.value[agentIndex.value].id;
+};
+
+const getAgentName = (id: string) => {
+  if (!id) return '自动关联当前用户';
+  const agent = agents.value.find(a => a.id === id);
+  return agent ? agent.name : '未知用户';
 };
 
 const handleDelete = async () => {
@@ -183,51 +231,49 @@ const handleDelete = async () => {
   });
 };
 
-const handleSave = async () => {
+const handleSave = async (autoConfirm = false) => {
   if (!form.value.name) return uni.showToast({ title: '请输入合同名称', icon: 'none' });
   if (!form.value.code) return uni.showToast({ title: '请输入合同编号', icon: 'none' });
   if (!form.value.site_id) return uni.showToast({ title: '请选择工地', icon: 'none' });
   if (!form.value.manufacturer_group_id) return uni.showToast({ title: '请选择厂家组', icon: 'none' });
-  
-  if (!form.value.agent_id) {
-     // 安全检查：如果没有分配经办人
-     const { data: users } = await supabase.from('user').select('id').limit(1);
-     if (users && users.length > 0) form.value.agent_id = users[0].id;
-     else return uni.showToast({ title: '系统未配置用户，无法分配负责人', icon: 'none' });
-  }
 
   loading.value = true;
   
   let error;
   
+  const payload = {
+    name: form.value.name,
+    code: form.value.code,
+    site_id: form.value.site_id,
+    manufacturer_group_id: form.value.manufacturer_group_id,
+    agent_id: form.value.agent_id,
+    // 保存时不修改确认/封存状态，除非是新增并确认
+    ...(isEdit.value ? { update_time: new Date().toISOString() } : {
+       is_confirmed: autoConfirm,
+       is_archived: false
+    })
+  };
+
   if (isEdit.value) {
-    // 更新
+    // 编辑模式下的保存，只更新基础字段，不更改状态 logic handled by separate buttons
     const { error: updateError } = await supabase
       .from('contract')
-      .update({
-        name: form.value.name,
-        code: form.value.code,
-        site_id: form.value.site_id,
-        manufacturer_group_id: form.value.manufacturer_group_id,
-        status: form.value.status,
-        agent_id: form.value.agent_id,
-        update_time: new Date().toISOString()
-      })
-      .eq('id', form.value.id);
+      .update(payload)
+      .eq('id', form.value.id)
+      // 乐观锁：确保当前状态未锁定，或者只允许修改基础信息。
+      // 这里假设编辑非状态字段不需要严格锁，只要记录存在。
+      // 但如果要求未确认才能修改基础信息:
+      .eq('is_confirmed', false); 
+      
     error = updateError;
+    if (error && error.code === 'PGRST116') { // No rows updated usually means condition failed
+       error.message = '合同已确认或不存在，无法修改';
+    }
   } else {
     // 插入
     const { error: insertError } = await supabase
       .from('contract')
-      .insert({
-        id: uuidv4(),
-        name: form.value.name,
-        code: form.value.code,
-        site_id: form.value.site_id,
-        manufacturer_group_id: form.value.manufacturer_group_id,
-        status: form.value.status,
-        agent_id: form.value.agent_id
-      });
+      .insert(payload);
     error = insertError;
   }
 
@@ -242,6 +288,78 @@ const handleSave = async () => {
       uni.navigateBack();
     }, 1500);
   }
+};
+
+const handleConfirm = async () => {
+   loading.value = true;
+   // 乐观锁：更新时确保当前通过 is_confirmed = false 判断
+   const { error } = await supabase
+     .from('contract')
+     .update({ is_confirmed: true, update_time: new Date().toISOString() })
+     .eq('id', form.value.id)
+     .eq('is_confirmed', false);
+
+   loading.value = false;
+   if (error) {
+      uni.showToast({ title: '确认失败: 可能是状态已变更', icon: 'none' });
+   } else {
+      form.value.is_confirmed = true;
+      uni.showToast({ title: '已确认', icon: 'success' });
+   }
+};
+
+const handleCancelConfirm = async () => {
+   loading.value = true;
+   // 乐观锁：更新时确保当前通过 is_confirmed = true 判断
+   const { error } = await supabase
+     .from('contract')
+     .update({ is_confirmed: false, update_time: new Date().toISOString() })
+     .eq('id', form.value.id)
+     .eq('is_confirmed', true)
+     .eq('is_archived', false); // 只有未封存的可以取消确认
+
+   loading.value = false;
+   if (error) {
+      uni.showToast({ title: '取消失败: 可能是状态已变更', icon: 'none' });
+   } else {
+      form.value.is_confirmed = false;
+      uni.showToast({ title: '已取消确认', icon: 'success' });
+   }
+};
+
+const handleArchive = async () => {
+   loading.value = true;
+   const { error } = await supabase
+     .from('contract')
+     .update({ is_archived: true, update_time: new Date().toISOString() })
+     .eq('id', form.value.id)
+     .eq('is_confirmed', true)
+     .eq('is_archived', false);
+
+   loading.value = false;
+   if (error) {
+      uni.showToast({ title: '封存失败', icon: 'none' });
+   } else {
+      form.value.is_archived = true;
+      uni.showToast({ title: '已封存', icon: 'success' });
+   }
+};
+
+const handleReactivate = async () => {
+   loading.value = true;
+   const { error } = await supabase
+     .from('contract')
+     .update({ is_archived: false, update_time: new Date().toISOString() })
+     .eq('id', form.value.id)
+     .eq('is_archived', true);
+
+   loading.value = false;
+   if (error) {
+      uni.showToast({ title: '启用失败', icon: 'none' });
+   } else {
+      form.value.is_archived = false;
+      uni.showToast({ title: '已重新启用', icon: 'success' });
+   }
 };
 </script>
 
@@ -293,39 +411,57 @@ const handleSave = async () => {
   .picker-view {
     color: #333; // 默认颜色
   }
+  
+  .disabled {
+    color: #999;
+    background-color: #f5f5f5;
+  }
 }
 
 .footer {
   margin-top: 30px;
   display: flex;
   gap: 15px;
+  flex-wrap: wrap; /* Allow wrapping if too many buttons */
 }
 
-.btn-delete {
+button {
   flex: 1;
-  background-color: #f5f5f5;
-  color: #ff4d4f;
   border-radius: 25px;
   height: 46px;
   line-height: 46px;
   font-size: 16px;
-  
-  &:active {
-    background-color: #eee;
-  }
-}
-
-.btn-save {
-  flex: 2;
-  background-color: #6739b6;
   color: #fff;
-  border-radius: 25px;
-  height: 46px;
-  line-height: 46px;
-  font-size: 16px;
+  border: none;
   
   &:active {
     opacity: 0.9;
   }
+  
+  &[disabled] {
+    opacity: 0.6;
+    background-color: #ccc !important;
+  }
+}
+
+.btn-delete {
+  background-color: #f5f5f5;
+  color: #ff4d4f;
+}
+
+.btn-save {
+  background-color: #6739b6;
+}
+
+.btn-primary {
+  background-color: #1890ff;
+}
+
+.btn-warning {
+  background-color: #fa8c16;
+}
+
+.btn-danger {
+  background-color: #ff4d4f;
 }
 </style>

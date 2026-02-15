@@ -25,7 +25,7 @@
           <text class="item-name">{{ item.name }}</text>
           <text class="item-code">编号: {{ item.code }}</text>
           <view class="item-meta">
-            <text class="tag status" :class="getStatusClass(item.status)">{{ getStatusText(item.status) }}</text>
+            <text class="tag status" :class="getStatusClass(item)">{{ getStatusText(item) }}</text>
           </view>
         </view>
         <view class="item-actions">
@@ -53,7 +53,8 @@ interface Contract {
   id: string;
   name: string;
   code: string;
-  status: string;
+  is_confirmed: boolean;
+  is_archived: boolean;
 }
 
 const list = ref<Contract[]>([]);
@@ -64,7 +65,7 @@ const fetchData = async () => {
   loading.value = true;
   let query = supabase
     .from('contract')
-    .select('id, name, code, status')
+    .select('id, name, code, is_confirmed, is_archived')
     .order('create_time', { ascending: false });
 
   if (keyword.value) {
@@ -82,24 +83,16 @@ const fetchData = async () => {
   loading.value = false;
 };
 
-const getStatusText = (status: string) => {
-  const map: Record<string, string> = {
-    '1': '已签订',
-    '0': '待签订',
-    '3': '已终止',
-    '2': '已完成'
-  };
-  return map[status] || status;
+const getStatusText = (item: Contract) => {
+  if (item.is_archived) return '已封存';
+  if (item.is_confirmed) return '已确认';
+  return '待确认';
 };
 
-const getStatusClass = (status: string) => {
-  const map: Record<string, string> = {
-    '1': 'signed',
-    '0': 'pending',
-    '3': 'terminated',
-    '2': 'completed'
-  };
-  return map[status] || '';
+const getStatusClass = (item: Contract) => {
+  if (item.is_archived) return 'archived';
+  if (item.is_confirmed) return 'confirmed';
+  return 'pending';
 };
 
 const handleSearch = () => {
@@ -221,10 +214,9 @@ onShow(() => {
   background-color: #eee;
   color: #666;
   
-  &.signed { background-color: #e6f7ff; color: #1890ff; }
+  &.confirmed { background-color: #e6f7ff; color: #1890ff; }
   &.pending { background-color: #fff7e6; color: #fa8c16; }
-  &.terminated { background-color: #fff1f0; color: #f5222d; }
-  &.completed { background-color: #f6ffed; color: #52c41a; }
+  &.archived { background-color: #f5f5f5; color: #999; }
 }
 
 .item-actions {

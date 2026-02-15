@@ -71,7 +71,7 @@
 import { ref, computed } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onLoad } from '@dcloudio/uni-app';
-import { v4 as uuidv4 } from 'uuid';
+
 
 interface Manufacturer {
   id: string;
@@ -226,18 +226,22 @@ const handleSave = async () => {
     error = updateError;
   } else {
     // 插入厂家组
-    groupId = uuidv4();
-    const { error: insertError } = await supabase
+    const { data: newGroup, error: insertError } = await supabase
       .from('manufacturer_group')
       .insert({
-        id: groupId,
         name: form.value.name,
         code: form.value.code
-      });
+      })
+      .select()
+      .single();
+    
+    if (newGroup) {
+      groupId = newGroup.id;
+    }
     error = insertError;
   }
 
-  if (!error) {
+  if (!error && groupId) {
     // 同步明细：删除所有旧的，插入所有新的
     // 1. 删除现有明细
     if (isEdit.value) {
@@ -250,7 +254,6 @@ const handleSave = async () => {
     // 2. 插入新明细
     if (selectedManufacturerIds.value.length > 0) {
       const detailsToInsert = selectedManufacturerIds.value.map(mid => ({
-        id: uuidv4(),
         manufacturer_group_id: groupId,
         manufacturer_id: mid
       }));

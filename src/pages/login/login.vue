@@ -8,31 +8,23 @@
       <!-- 头部 Logo/标题 -->
       <view class="header">
         <text class="logo-text">HK</text>
-        <text class="app-name">综合管理系统</text>
+        <text class="app-name">恒堃科技</text>
         <text class="welcome-text">欢迎使用</text>
       </view>
 
       <!-- 登录卡片 -->
       <view class="login-card">
-        <view class="card-title-bar">
-          <text class="card-title">{{ isBinding ? '绑定账号' : '账号登录' }}</text>
-          <view class="title-line"></view>
-        </view>
+
 
         <view class="card-body">
-            <view v-if="isBinding" class="bind-notice">
-                <text class="iconfont icon-warning-circle"></text>
-                <text class="notice-text">当前微信未绑定系统账号\n请联系管理员进行关联</text>
-            </view>
 
-             <button v-if="!isBinding" class="btn-primary" hover-class="btn-hover" @click="handleWechatLogin" :disabled="loading">
+
+             <button class="btn-primary" hover-class="btn-hover" @click="handleWechatLogin" :disabled="loading">
                 <text class="iconfont icon-wechat"></text>
                 <text class="btn-text">微信一键登录</text>
              </button>
 
-             <view v-if="isBinding" class="action-area">
-                <text class="link-btn" @click="cancelBind">返回登录</text>
-             </view>
+
         </view>
       </view>
 
@@ -53,8 +45,7 @@ import { mockWechatLogin } from '@/utils/dev';
 // #endif
 
 const loading = ref(false);
-const isBinding = ref(false);
-const tempOpenId = ref('');
+
 
 const handleWechatLogin = async () => {
   loading.value = true;
@@ -118,9 +109,7 @@ const handleWechatLogin = async () => {
             }, 1500);
         },
         (openId) => {
-            // 需要绑定回调
-            tempOpenId.value = openId;
-            isBinding.value = true;
+            console.warn('Mock: Need binding (UI removed)', openId);
         }
       );
       // #endif
@@ -133,10 +122,7 @@ const handleWechatLogin = async () => {
   });
 };
 
-const cancelBind = () => {
-  isBinding.value = false;
-  tempOpenId.value = '';
-};
+
 </script>
 
 <style lang="scss">
@@ -227,26 +213,7 @@ const cancelBind = () => {
     align-items: center;
 }
 
-.card-title-bar {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 30px;
-    
-    .card-title {
-        font-size: 18px;
-        font-weight: 600;
-        color: #333;
-    }
-    
-    .title-line {
-        width: 30px;
-        height: 3px;
-        background: #6739b6;
-        border-radius: 2px;
-        margin-top: 8px;
-    }
-}
+
 
 .card-body {
     width: 100%;
@@ -286,44 +253,9 @@ const cancelBind = () => {
     box-shadow: 0 4px 10px rgba(103, 57, 182, 0.2);
 }
 
-.bind-notice {
-    background: #fff8e6;
-    border: 1px solid #ffeeba;
-    padding: 15px;
-    border-radius: 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    margin-bottom: 20px;
-    
-    .iconfont {
-        font-size: 24px;
-        color: #ff9800;
-        margin-bottom: 8px;
-    }
-    
-    .notice-text {
-        font-size: 14px;
-        color: #666;
-        line-height: 1.5;
-    }
-}
 
-.action-area {
-    text-align: center;
-    margin-top: 10px;
-    
-    .link-btn {
-        color: #999;
-        font-size: 14px;
-        padding: 10px;
-        
-        &:active {
-            color: #666;
-        }
-    }
-}
+
+
 
 .footer-area {
     margin-top: 60px;

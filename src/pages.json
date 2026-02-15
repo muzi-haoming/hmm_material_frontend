@@ -37,7 +37,7 @@
 			}
 		},
 		{
-			"path": "pages/site/site-list",
+			"path": "pages/site/list",
 			"style": {
 				"navigationBarTitleText": "工地信息",
 				"navigationBarBackgroundColor": "#6739b6",
@@ -45,7 +45,7 @@
 			}
 		},
 		{
-			"path": "pages/site/site-edit",
+			"path": "pages/site/edit",
 			"style": {
 				"navigationBarTitleText": "编辑工地",
 				"navigationBarBackgroundColor": "#6739b6",
@@ -245,7 +245,7 @@
 			}
 		},
 		{
-			"path": "pages/user/list",
+			"path": "pages/profile/list",
 			"style": {
 				"navigationBarTitleText": "用户管理",
 				"navigationBarBackgroundColor": "#6739b6",
@@ -253,9 +253,57 @@
 			}
 		},
 		{
-			"path": "pages/user/edit",
+			"path": "pages/profile/edit",
 			"style": {
 				"navigationBarTitleText": "编辑用户",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/list",
+			"style": {
+				"navigationBarTitleText": "合同订单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/create",
+			"style": {
+				"navigationBarTitleText": "创建合同订单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/detail",
+			"style": {
+				"navigationBarTitleText": "订单详情",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/flow-actions/create-purchase",
+			"style": {
+				"navigationBarTitleText": "创建采购单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/flow-actions/create-outbound",
+			"style": {
+				"navigationBarTitleText": "创建出库单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/contract-order/flow-actions/create-inbound",
+			"style": {
+				"navigationBarTitleText": "创建入库单",
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}

@@ -3,7 +3,7 @@
     <!-- 顶部 -->
     <view class="header-bg">
       <view class="title-bar">
-        <text class="app-title">HK 综合管理系统</text>
+        <text class="app-title">恒堃科技</text>
       </view>
     </view>
 
@@ -14,16 +14,16 @@
         <text v-else class="iconfont icon-person"></text>
       </view>
       <view class="user-info">
-        <text class="name">{{ userInfo.wechat_nickname || userInfo.full_name || '未同步微信昵称' }}</text>
+        <text class="name">{{ profile.nickname || '未设置昵称' }}</text>
         <text class="hint" v-if="isProfileIncomplete">点击完善信息</text>
-        <text class="role tag">{{ userInfo.role_name || '普通用户' }}</text>
+        <text class="role tag">{{ profile.user_role?.name || '未设置角色' }}</text>
       </view>
       <text class="iconfont icon-right arrow"></text>
     </view>
 
     <!-- 菜单列表 -->
     <view class="menu-list">
-      <view class="menu-item" v-if="isAdmin" @click="navigateTo('/pages/user/list')">
+      <view class="menu-item" v-if="isAdmin" @click="navigateTo('/pages/profile/list')">
         <text class="iconfont icon-team menu-icon"></text>
         <text class="menu-text">用户管理</text>
         <text class="iconfont icon-right arrow"></text>
@@ -43,7 +43,7 @@
       </view>
     </view>
 
-    <!-- 编辑资料弹窗 (简易版模态框) -->
+    <!-- 编辑资料弹窗 -->
     <view class="modal-mask" v-if="showEditModal" @click="closeEditModal">
       <view class="modal-content" @click.stop>
         <view class="modal-header">完善个人资料</view>
@@ -52,7 +52,8 @@
           <!-- 头像设置 -->
           <view class="avatar-edit-wrapper">
              <button class="avatar-btn" open-type="chooseAvatar" @chooseavatar="onChooseAvatar">
-               <image class="avatar-img" :src="editForm.avatarUrl || '/static/default-avatar.png'" mode="aspectFill"></image>
+               <image v-if="editForm.avatarUrl" class="avatar-img" :src="editForm.avatarUrl" mode="aspectFill"></image>
+               <view v-else class="avatar-placeholder"><text class="iconfont icon-person"></text></view>
                <view class="avatar-edit-icon"><text class="iconfont icon-camera"></text></view>
              </button>
              <text class="avatar-tip">点击修改头像</text>
@@ -60,7 +61,7 @@
 
           <!-- 微信昵称 -->
           <view class="form-item">
-            <text class="label">微信昵称 (点击下方输入框可自动获取)</text>
+            <text class="label">昵称</text>
             <input class="input" type="nickname" v-model="editForm.nickname" placeholder="请输入昵称" @blur="onNicknameBlur" />
           </view>
 
@@ -100,7 +101,7 @@ import { uploadAvatar } from '@/utils/upload';
 import { onShow } from '@dcloudio/uni-app';
 
 // 状态
-const userInfo = ref<any>(uni.getStorageSync('userInfo') || {}); // 优先从缓存读取，避免闪烁
+const profileInfo = ref<any>(uni.getStorageSync('profileInfo') || {}); // 优先从缓存读取，避免闪烁
 const profile = ref<any>({});  // Profile Table Info
 const loading = ref(false);
 
@@ -115,15 +116,15 @@ const editForm = reactive({
 });
 
 const isAdmin = computed(() => {
-  return userInfo.value.role_code === 'admin';
+  return profileInfo.value.role_code === 'admin';
 });
 
 const isProfileIncomplete = computed(() => {
-  if (!userInfo.value || !profile.value) return false;
+  if (!profileInfo || !profile) return false;
   // 检查手机号或邮箱是否为空
-  const missingContact = !userInfo.value.phone || !userInfo.value.email;
+  const missingContact = !profile.value.phone || !profile.value.email;
   // 检查真实姓名是否为空或默认值
-  const incompleteName = !profile.value.name || profile.value.name === '微信用户';
+  const incompleteName = !profile.value.name;
   
   return missingContact || incompleteName;
 });
@@ -148,19 +149,19 @@ const fetchUserData = async () => {
         profile.value = profileData;
     }
 
-    // 3. 合并信息 (Profile 优先于 Meta, Meta 优先于 User)
-    const newUserInfo: any = {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        ...user.user_metadata,
-        role_code: profileData?.user_role?.code,
-        role_name: profileData?.user_role?.name
+    const newProfileInfo: any = {
+        id: profileData.id,
+        email: profileData.email,
+        phone: profileData.phone,
+        nickname: profileData.nickname,
+        name: profileData.name,
+        role_code: profileData.user_role.code,
+        role_name: profileData.user_role.name
     };
 
     // 更新状态并缓存
-    userInfo.value = newUserInfo;
-    uni.setStorageSync('userInfo', newUserInfo);
+    profileInfo.value = newProfileInfo;
+    uni.setStorageSync('profileInfo', newProfileInfo);
 };
 
 const onChooseAvatar = (e: any) => {
@@ -177,18 +178,13 @@ const onNicknameBlur = (e: any) => {
 };
 
 const handleEditProfile = () => {
-  // 如果是默认名称“微信用户”，显示为空，方便用户填写
-  const isDefaultName = profile.value.name === '微信用户';
-  editForm.name = isDefaultName ? '' : (profile.value.name || '');
-  
-  // 如果是自动生成的微信邮箱，显示为空，方便用户填写
-  const isWechatEmail = userInfo.value.email && userInfo.value.email.endsWith('@wechat.local');
-  editForm.email = isWechatEmail ? '' : (userInfo.value.email || '');
-  
-  editForm.phone = userInfo.value.phone || '';
-  editForm.nickname = userInfo.value.wechat_nickname || '';
+  // strict reliance on profile table
+  editForm.name = profile.value.name || '';
+  editForm.email = profile.value.email || '';
+  editForm.phone = profile.value.phone || '';
+  editForm.nickname = profile.value.nickname || '';
   editForm.avatarUrl = profile.value.avatar_url || '';
-  
+
   showEditModal.value = true;
 };
 
@@ -197,15 +193,13 @@ const closeEditModal = () => {
 };
 
 const saveProfile = async () => {
-    if (!editForm.name) return uni.showToast({ title: '请输入真实姓名', icon: 'none' });
-
     loading.value = true;
     try {
         let finalAvatarUrl = profile.value.avatar_url;
 
         // 0. 处理头像上传 (如果在编辑时改了 avatarUrl)
         if (editForm.avatarUrl && editForm.avatarUrl !== profile.value.avatar_url) {
-            const uploadedUrl = await uploadAvatar(editForm.avatarUrl, userInfo.value.id);
+            const uploadedUrl = await uploadAvatar(editForm.avatarUrl, profile.value.id);
             if (uploadedUrl) {
                 finalAvatarUrl = uploadedUrl;
             } else {
@@ -213,27 +207,19 @@ const saveProfile = async () => {
             }
         }
 
-        // 1. 更新 Profile 表 (Name, Avatar)
+        // 1. 更新 Profile 表 (Name, Avatar, Nickname, Email, Phone)
         const { error: profileError } = await supabase
             .from('profile')
             .update({ 
                 name: editForm.name,
-                avatar_url: finalAvatarUrl
+                avatar_url: finalAvatarUrl,
+                nickname: editForm.nickname, 
+                email: editForm.email,
+                phone: editForm.phone
             })
-            .eq('id', userInfo.value.id);
+            .eq('id', profile.value.id);
         
         if (profileError) throw profileError;
-
-        // 2. 更新 Auth Metadata (Phone, Email, Nickname)
-        const { error: authError } = await supabase.auth.updateUser({
-            data: {
-                phone: editForm.phone || null,
-                email: editForm.email || null,
-                wechat_nickname: editForm.nickname || null
-            }
-        });
-        
-        if (authError) throw authError;
 
         uni.showToast({ title: '保存成功', icon: 'success' });
         showEditModal.value = false;
@@ -258,7 +244,7 @@ const handleLogout = async () => {
         success: async (res) => {
             if (res.confirm) {
                 await supabase.auth.signOut(); 
-                uni.removeStorageSync('userInfo');
+                uni.removeStorageSync('profileInfo');
                 uni.reLaunch({ url: '/pages/login/login' });
             }
         }
@@ -579,5 +565,19 @@ const handleLogout = async () => {
     font-size: 12px;
     color: #999;
     margin-top: 8px;
+}
+
+.avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  background-color: #f0f0f0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  
+  .icon-person {
+    font-size: 40px;
+    color: #ccc;
+  }
 }
 </style>

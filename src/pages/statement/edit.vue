@@ -138,7 +138,7 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onLoad } from '@dcloudio/uni-app';
-import { v4 as uuidv4 } from 'uuid';
+
 
 interface Option {
   id: string;
@@ -338,11 +338,16 @@ const handleSave = async () => {
     const { error } = await supabase.from('statement').update(masterPayload).eq('id', statementId);
     if (error) { loading.value = false; return uni.showToast({ title: '保存主表失败' + error.message, icon: 'none' }); }
   } else {
-    // @ts-ignore
-    statementId = uuidv4();
-    // @ts-ignore
-    masterPayload.id = statementId;
-    const { error } = await supabase.from('statement').insert(masterPayload);
+    const { data: newStatement, error } = await supabase
+      .from('statement')
+      .insert(masterPayload)
+      .select()
+      .single();
+      
+    if (newStatement) {
+      statementId = newStatement.id;
+    }
+    
     if (error) { loading.value = false; return uni.showToast({ title: '保存主表失败' + error.message, icon: 'none' }); }
   }
 
@@ -353,9 +358,8 @@ const handleSave = async () => {
   }
 
   // 3. 插入物资明细
-  if (materials.value.length > 0) {
+  if (materials.value.length > 0 && statementId) {
     const matInserts = materials.value.map(m => ({
-      id: uuidv4(),
       statement_id: statementId,
       product_id: m.product_id,
       quantity: m.quantity,
@@ -365,9 +369,8 @@ const handleSave = async () => {
   }
 
   // 4. 插入其他费用
-  if (expenses.value.length > 0) {
+  if (expenses.value.length > 0 && statementId) {
     const expInserts = expenses.value.map(e => ({
-      id: uuidv4(),
       statement_id: statementId,
       item_id: e.item_id,
       amount: e.amount

@@ -92,11 +92,11 @@ const clearSearch = () => {
 };
 
 const goAdd = () => {
-  uni.navigateTo({ url: '/pages/site/site-edit' });
+  uni.navigateTo({ url: '/pages/site/edit' });
 };
 
 const goEdit = (id: string) => {
-  uni.navigateTo({ url: `/pages/site/site-edit?id=${id}` });
+  uni.navigateTo({ url: `/pages/site/edit?id=${id}` });
 };
 
 const handleDelete = async (id: string) => {
