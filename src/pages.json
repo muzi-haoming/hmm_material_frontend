@@ -19,6 +19,39 @@
 			}
 		},
 		{
+			"path": "pages/business/index",
+			"style": {
+				"navigationBarTitleText": "业务单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/stock/dashboard",
+			"style": {
+				"navigationBarTitleText": "仓储",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/finance/index",
+			"style": {
+				"navigationBarTitleText": "财务",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/my/my",
+			"style": {
+				"navigationBarTitleText": "设置",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white",
+				"navigationStyle": "custom"
+			}
+		},
+		{
 			"path": "pages/work/work",
 			"style": {
 				"navigationBarTitleText": "工作台",
@@ -69,22 +102,6 @@
 			}
 		},
 		{
-			"path": "pages/manufacturer-group/list",
-			"style": {
-				"navigationBarTitleText": "厂家组",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/manufacturer-group/edit",
-			"style": {
-				"navigationBarTitleText": "编辑厂家组",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
 			"path": "pages/product/list",
 			"style": {
 				"navigationBarTitleText": "产品信息",
@@ -96,6 +113,30 @@
 			"path": "pages/product/edit",
 			"style": {
 				"navigationBarTitleText": "编辑产品",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/material/list",
+			"style": {
+				"navigationBarTitleText": "物料信息",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/material/edit",
+			"style": {
+				"navigationBarTitleText": "编辑物料",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/product-material/list",
+			"style": {
+				"navigationBarTitleText": "产品与物料关系",
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}
@@ -117,97 +158,9 @@
 			}
 		},
 		{
-			"path": "pages/order/list",
+			"path": "pages/contract/detail",
 			"style": {
-				"navigationBarTitleText": "订单信息",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/order/edit",
-			"style": {
-				"navigationBarTitleText": "编辑订单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/purchase/list",
-			"style": {
-				"navigationBarTitleText": "采购单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/purchase/edit",
-			"style": {
-				"navigationBarTitleText": "编辑采购单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock-in/list",
-			"style": {
-				"navigationBarTitleText": "入库单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock-in/edit",
-			"style": {
-				"navigationBarTitleText": "编辑入库单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock-out/list",
-			"style": {
-				"navigationBarTitleText": "出库单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock-out/edit",
-			"style": {
-				"navigationBarTitleText": "编辑出库单",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock/list",
-			"style": {
-				"navigationBarTitleText": "库存信息",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/stock/edit",
-			"style": {
-				"navigationBarTitleText": "库存盘点",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/expense-item/list",
-			"style": {
-				"navigationBarTitleText": "其他费用项",
-				"navigationBarBackgroundColor": "#6739b6",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/expense-item/edit",
-			"style": {
-				"navigationBarTitleText": "编辑费用项",
+				"navigationBarTitleText": "合同详情",
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}
@@ -229,15 +182,39 @@
 			}
 		},
 		{
-			"path": "pages/user-role/list",
+			"path": "pages/statement/detail",
 			"style": {
-				"navigationBarTitleText": "用户角色管理",
+				"navigationBarTitleText": "对账单详情",
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}
 		},
 		{
-			"path": "pages/user-role/edit",
+			"path": "pages/expense-item/list",
+			"style": {
+				"navigationBarTitleText": "其他费用项",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/expense-item/edit",
+			"style": {
+				"navigationBarTitleText": "编辑费用项",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/role/list",
+			"style": {
+				"navigationBarTitleText": "角色管理",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/role/edit",
 			"style": {
 				"navigationBarTitleText": "编辑角色",
 				"navigationBarBackgroundColor": "#6739b6",
@@ -285,6 +262,14 @@
 			}
 		},
 		{
+			"path": "pages/contract-order/edit",
+			"style": {
+				"navigationBarTitleText": "编辑订单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
 			"path": "pages/contract-order/flow-actions/create-purchase",
 			"style": {
 				"navigationBarTitleText": "创建采购单",
@@ -307,6 +292,86 @@
 				"navigationBarBackgroundColor": "#6739b6",
 				"navigationBarTextStyle": "white"
 			}
+		},
+		{
+			"path": "pages/invoice/list",
+			"style": {
+				"navigationBarTitleText": "发票管理",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/invoice/edit",
+			"style": {
+				"navigationBarTitleText": "发票详情",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/stock-in/edit",
+			"style": {
+				"navigationBarTitleText": "办理入库",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/stock-in/list",
+			"style": {
+				"navigationBarTitleText": "入库记录",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/stock-out/edit",
+			"style": {
+				"navigationBarTitleText": "办理出库",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/stock-out/list",
+			"style": {
+				"navigationBarTitleText": "出库记录",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/role-site/list",
+			"style": {
+				"navigationBarTitleText": "角色-工地权限",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/role-manufacturer/list",
+			"style": {
+				"navigationBarTitleText": "角色-厂家权限",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/purchase/edit",
+			"style": {
+				"navigationBarTitleText": "采购下单",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/purchase/list",
+			"style": {
+				"navigationBarTitleText": "采购记录",
+				"navigationBarBackgroundColor": "#6739b6",
+				"navigationBarTextStyle": "white"
+			}
 		}
 	],
 	"tabBar": {
@@ -317,19 +382,31 @@
 		"list": [
 			{
 				"pagePath": "pages/index/index",
-				"text": "首页",
+				"text": "工作台",
 				"iconPath": "static/tabbar/home.png",
 				"selectedIconPath": "static/tabbar/home_active.png"
 			},
 			{
-				"pagePath": "pages/work/work",
-				"text": "工作台",
+				"pagePath": "pages/business/index",
+				"text": "业务单",
 				"iconPath": "static/tabbar/work.png",
 				"selectedIconPath": "static/tabbar/work_active.png"
 			},
 			{
-				"pagePath": "pages/profile/profile",
-				"text": "我的",
+				"pagePath": "pages/stock/dashboard",
+				"text": "仓储",
+				"iconPath": "static/tabbar/work.png",
+				"selectedIconPath": "static/tabbar/work_active.png"
+			},
+			{
+				"pagePath": "pages/finance/index",
+				"text": "财务",
+				"iconPath": "static/tabbar/work.png",
+				"selectedIconPath": "static/tabbar/work_active.png"
+			},
+			{
+				"pagePath": "pages/my/my",
+				"text": "设置",
 				"iconPath": "static/tabbar/profile.png",
 				"selectedIconPath": "static/tabbar/profile_active.png"
 			}

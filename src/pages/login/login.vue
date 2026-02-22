@@ -38,8 +38,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { supabase } from '@/utils/supabase';
 import { loginWithWechatCode } from '@/utils/auth';
+import { refreshUserPermissions } from '@/utils/permission';
 // #ifdef H5
 import { mockWechatLogin } from '@/utils/dev';
 // #endif
@@ -60,28 +60,13 @@ const handleWechatLogin = async () => {
       try {
         // 2. 使用封装的 Auth 工具登录
         const data = await loginWithWechatCode(loginRes.code);
-
-        // 3. 获取用户资料
         const userId = data.user.id;
-        const { data: profile, error: profileError } = await supabase
-            .from('profile')
-            .select('*, user_role:role_id(code, name)')
-            .eq('id', userId)
-            .single();
-            
-        if (profileError || !profile) {
-            throw new Error('Failed to fetch user profile');
-        }
+
+        // 3. 获取并刷新用户权限 (包含 Role, Site, Manufacturer)
+        await refreshUserPermissions(userId);
 
         // 4. 保存并重定向
         uni.showToast({ title: '登录成功', icon: 'success' });
-        
-        const userInfo = {
-            ...profile,
-            role_code: profile.user_role?.code,
-            role_name: profile.user_role?.name
-        };
-        uni.setStorageSync('userInfo', userInfo);
         
         setTimeout(() => {
             uni.reLaunch({ url: '/pages/index/index' });
@@ -101,12 +86,25 @@ const handleWechatLogin = async () => {
       // #ifdef H5
       console.warn('H5 开发模式：模拟微信登录');
       mockWechatLogin(
-        (userInfo) => {
-            // 登录成功回调
-            uni.setStorageSync('userInfo', userInfo);
+        async (userInfo: any) => {
+            // H5 Mock 模式下也尝试刷新权限
+            try {
+                const user = await refreshUserPermissions(userInfo.id);
+                console.log('Mock login permissions refreshed:', user);
+            } catch (e) {
+                console.warn('Mock permission refresh failed, using default:', e);
+                // Fallback if DB fetch fails
+                uni.setStorageSync('userInfo', {
+                    ...userInfo,
+                    site_permissions: [],
+                    manufacturer_permissions: [],
+                    is_admin: false 
+                });
+            }
+            
             setTimeout(() => {
                 uni.reLaunch({ url: '/pages/index/index' });
-            }, 1500);
+            }, 1000);
         },
         (openId) => {
             console.warn('Mock: Need binding (UI removed)', openId);

@@ -1,0 +1,3065 @@
+create extension if not exists "uuid-ossp";
+create extension if not exists hstore;
+-----------------------------------
+--------- 公共触发器函数
+-----------------------------------
+-----------------------------------
+-- 权限检查辅助函数
+create or replace function is_admin()
+returns boolean as $$
+select (auth.jwt() -> 'app_metadata' ->> 'role_code') = 'admin';
+$$ language sql security definer stable;
+
+create or replace function is_role(role_code text)
+returns boolean as $$
+select (auth.jwt() -> 'app_metadata' ->> 'role_code') = role_code;
+$$ language sql security definer stable;
+
+create or replace function current_role_id()
+returns uuid as $$
+select (auth.jwt() -> 'app_metadata' ->> 'role_id')::uuid;
+$$ language sql security definer stable;
+
+-- 设置修改人
+create or replace function set_modifier()
+returns trigger as $$
+begin
+    new.modifier = auth.uid();
+    return new;
+end;
+$$ language plpgsql set search_path = public;
+-- 设置修改时间
+create or replace function set_modify_time()
+returns trigger as $$
+begin
+    new.modify_time = current_timestamp;
+    return new;
+end;
+$$ language plpgsql set search_path = public;
+-- 确认和完成状态的公共触发器函数
+create or replace function check_bill_status_rules()
+returns trigger as $$
+declare
+	v_allowed_cols text[] := null;
+	r record;             -- 存放查出来的外键信息
+    v_sql text;           -- 存放动态生成的 sql
+    v_has_ref boolean;    -- 检查结果
+    v_ref_table_name text; -- 报错用的表名
+begin
+	if (new.is_confirmed <> old.is_confirmed) and (new.is_completed <> old.is_completed) then
+		raise exception '非法操作：禁止同时修改[确认状态]和[完成状态]! 请分步操作。';
+	end if;
+
+    -- 禁止跳过确认直接完成
+    if (old.is_confirmed = false and new.is_completed = true) then
+        raise exception '非法操作：单据必须先确认后才能完成!';
+    end if;
+
+	-- 1. 设置和取消完成状态, 如果没有夹带私货, 直接通过
+	if (old.is_confirmed and new.is_confirmed and (new.is_completed <> old.is_completed)) then
+		v_allowed_cols := array['modifier', 'modify_time', 'is_completed'];
+		if (hstore(new) - v_allowed_cols) <> (hstore(old) - v_allowed_cols) then
+			raise exception '修改完成状态时存在修改其他数据的行为! (差异字段: %)', (hstore(new) - v_allowed_cols) - (hstore(OLD) - v_allowed_cols);
+		end if;
+		return new;
+	end if;
+	
+	-- 2. 设置和取消确认状态, 如果没有夹带私货, 直接通过
+	if (not old.is_completed and not new.is_completed and (new.is_confirmed <> old.is_confirmed)) then
+		v_allowed_cols := array['modifier', 'modify_time', 'is_confirmed'];
+		if (hstore(new) - v_allowed_cols) <> (hstore(old) - v_allowed_cols) then
+			raise exception '修改确认状态时存在修改其他数据的行为! (差异字段: %)', (hstore(new) - v_allowed_cols) - (hstore(old) - v_allowed_cols);
+		end if;
+		-- 取消确认校验逻辑
+		if (new.is_confirmed = false) then
+            -- 循环遍历所有指向当前表的外键
+            -- conrelid: 引用表(子表), confrelid: 被引用表(父表/当前表)
+            for r in 
+                select 
+					conrelid::regclass::text as table_name, -- 获取子表表名
+                    a.attname as col_name,                  -- 获取子表外键列名
+                    obj_description(conrelid) as table_comment -- 获取子表的注释(如果有)
+                from pg_constraint c
+                join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+                where 
+					c.confrelid = tg_relid -- tg_relid 是当前触发器所在的表 oid
+					and c.contype = 'f'        -- 只找外键 (foreign key)
+            loop
+                -- 构造动态查询语句: select true from 子表 where 外键列 = old.id limit 1
+                v_sql := format('select true from %s where %I = $1 limit 1', r.table_name, r.col_name);
+                -- 执行动态 sql
+                execute v_sql using old.id into v_has_ref;
+                -- 如果找到了关联数据
+                if v_has_ref then
+                    -- 优先使用表注释作为报错名称，如果没有注释则用表名
+                    v_ref_table_name := coalesce(r.table_comment, r.table_name);
+                    raise exception '无法取消确认! 存在其他业务数据: [%] (表: %)', v_ref_table_name, r.table_name;
+                end if;
+            end loop;
+        end if;
+		return new;
+	end if;
+	
+	-- 合法的修改操作, 直接通过
+	if (not old.is_confirmed and not new.is_confirmed and not old.is_completed and not new.is_completed) then
+		return new;
+	end if;
+
+	raise exception '未知的非法操作!'
+end;
+$$ language plpgsql set search_path = public, pg_temp;
+-----------------------------------
+--------- 角色
+-----------------------------------
+-----------------------------------
+-- 创建表 --
+drop table if exists "role" cascade;
+create table "role" (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp
+);
+-- 增加注释
+comment on table "role" is '角色';
+comment on column "role".id is '主键';
+comment on column "role".code is '编码';
+comment on column "role".name is '名称';
+comment on column "role".create_time is '创建时间';
+comment on column "role".modify_time is '修改时间';
+-----------------------------------
+-- 私用触发器函数
+-- 创建/更新反向同步函数 (兼容 INSERT 和 UPDATE)
+create or replace function sync_profile_role_change()
+returns trigger as $$
+declare
+    v_role_code varchar;
+begin
+    -- 逻辑判断：
+    -- 1. 如果是 INSERT (新增档案)，直接同步
+    -- 2. 如果是 UPDATE (修改档案)，只有 role_id 变了才同步
+    if (tg_op = 'INSERT') or (tg_op = 'UPDATE' and old.role_id is distinct from new.role_id) then
+        
+        -- 查出新的 role_code
+        select code into v_role_code from "role" where id = new.role_id;
+        
+        -- 防御性检查：如果查不到角色（比如外键还没提交），则不执行
+        if v_role_code is not null then
+            -- 更新 supabase auth 元数据
+            update auth.users
+            set raw_app_meta_data = 
+                coalesce(raw_app_meta_data, '{}'::jsonb) || -- 确保不为 null
+                jsonb_build_object(
+                    'role_code', v_role_code, 
+                    'role_id', new.role_id
+                )
+            where id = new.id;
+        end if;
+    end if;
+    return new;
+end;
+$$ language plpgsql set search_path = public;
+-----------------------------------
+-- 绑定触发器
+create trigger role_set_modify_time before update on "role" for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table "role" enable row level security;
+-- 设置 policy
+-- insert policy: 
+--   check:
+--     1. 只有管理员才能新增
+create policy "role_insert_policy" on "role" for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "role_delete_policy" on "role" for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "role_update_policy" on "role" for update to authenticated using (
+	is_admin()
+) with check (true);
+-- select policy:
+--   using:
+--     1. 可以查询自己的数据
+--     2. 管理员可以查询所有数据
+create policy "role_select_policy" on "role" for select to authenticated using (
+	is_role(code) or is_admin()
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+insert into "role" (code, name) values ('admin', '管理员');
+insert into "role" (code, name) values ('guest', '访客');
+insert into "role" (code, name) values ('agent', '代理人');
+commit;
+
+-----------------------------------
+--------- 档案
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists profile cascade;
+create table profile (
+    id uuid primary key references auth.users(id) on delete cascade,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    role_id uuid not null references "role"(id),
+    nickname varchar(200),
+    full_name varchar(200),
+    phone varchar(50),
+    email varchar(50),
+    avatar_url text
+);
+-- 增加注释
+comment on table profile is '档案';
+comment on column profile.id is '主键';
+comment on column profile.create_time is '创建时间';
+comment on column profile.modify_time is '修改时间';
+comment on column profile.role_id is '角色ID';
+comment on column profile.nickname is '昵称';
+comment on column profile.full_name is '真实姓名';
+comment on column profile.phone is '手机号';
+comment on column profile.email is '邮箱';
+comment on column profile.avatar_url is '头像URL';
+-----------------------------------
+-- 私用触发器函数
+-- 从 auth.users 同步用户信息到 profile
+create or replace function sync_user_info()
+returns trigger as $$
+declare
+    default_role_id uuid;
+    default_role_code text := 'guest';
+begin
+    -- 1. 获取默认角色 ID
+    select id into default_role_id from public.role where code = default_role_code limit 1;
+    -- 2. 同步到业务表
+    insert into public.profile (id, role_id)
+    values (new.id, default_role_id);
+    -- 3. 【关键】同步到 Auth 元数据，确保 JWT 立即生效
+    update auth.users
+    set raw_app_meta_data = raw_app_meta_data || jsonb_build_object('role_code', default_role_code, 'role_id', default_role_id)
+    where id = new.id;
+    return new;
+end;
+$$ language plpgsql security definer set search_path = public, auth;
+-- 删除 profile 数据的时候同步删除对应的头像
+create or replace function delete_avatar()
+returns trigger as $$
+begin
+	delete from storage.objects where bucket_id = 'avatar' and name like (old.id::text || '.%');
+    return old;
+end;
+$$ language plpgsql set search_path = public, storage;
+-----------------------------------
+-- 绑定触发器
+create trigger profile_set_modify_time before update on profile for each row execute function set_modify_time();
+create trigger on_profile_role_change after insert or update on profile for each row execute function sync_profile_role_change();
+create trigger profile_sync_user_info after insert on auth.users for each row execute function sync_user_info();
+create trigger profile_delete_avatar after delete on profile for each row execute function delete_avatar();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table profile enable row level security;
+-- 设置 policy
+-- insert policy: 
+--   1. 只能新增自己的数据
+create policy "profile_insert_policy" on profile for insert to authenticated with check (
+    auth.uid() = id
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "profile_delete_policy" on profile for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 自己能修改自己的数据
+--     2. 管理员能修改所有人的数据
+--   check: true
+create policy "profile_update_policy" on profile for update to authenticated using (
+	auth.uid() = id
+	or is_admin()
+) with check (true);
+-- select policy:
+--   using:
+--     1. 可以查询自己的数据
+--     2. 管理员可以查询所有数据
+create policy "profile_select_policy" on profile for select to authenticated using (
+	auth.uid() = id
+	or is_admin()
+);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('avatar', '头像', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 avatar
+--     2. 新增的头像必须是当前用户的 \ 路径必须是 avatar/auth.uid().后缀
+create policy "avatar_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'avatar'
+    and name ~ (auth.uid()::text || '\.(jpg|jpeg|png|webp)$')
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 avatar
+--     2. 只有管理员才能删除
+create policy "avatar_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'avatar'
+    and is_admin()
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 avatar
+--     2. 修改的头像必须是当前用户的 \ 路径必须是 avatar/auth.uid().后缀
+--   check:
+--     1. 操作的必须是 avatar
+--     2. 修改的头像必须是当前用户的 \ 路径必须是 avatar/auth.uid().后缀
+create policy "avatar_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'avatar'
+    and name ~ (auth.uid()::text || '\.(jpg|jpeg|png|webp)$')
+) with check (
+    bucket_id = 'avatar'
+    and name ~ (auth.uid()::text || '\.(jpg|jpeg|png|webp)$')
+);
+-- select policy:
+--   using:
+--     1. 操作的必须是 avatar
+--     2. 自己能查询自己的数据 \ 路径必须是 avatar/auth.uid().后缀
+--     3. 管理员可以查询所有数据
+create policy "avatar_select_policy" on storage.objects for select to authenticated using (
+	bucket_id = 'avatar'
+    and (
+		is_admin()
+		or name in (auth.uid()::text || '.jpg', auth.uid()::text || '.jpeg', auth.uid()::text || '.png', auth.uid()::text || '.webp')
+	)
+);
+-----------------------------------
+-- 初始化数据
+insert into profile (id, role_id)
+select u.id, (select id from "role" where code = 'guest' limit 1)
+from auth.users u left join profile p on u.id = p.id
+where p.id is null;
+commit;
+
+-----------------------------------
+--------- 工地
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists site cascade;
+create table site (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp
+);
+-- 增加注释
+comment on table site is '工地';
+comment on column site.id is '主键';
+comment on column site.code is '编码';
+comment on column site.name is '名称';
+comment on column site.create_time is '创建时间';
+comment on column site.modify_time is '修改时间';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger site_set_modify_time before update on site for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table site enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "site_insert_policy" on site for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "site_delete_policy" on site for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "site_update_policy" on site for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: true
+create policy "site_select_policy" on site for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 产品
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists product cascade;
+create table product (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    unit varchar(20) not null,
+    price decimal(19,4) not null
+);
+-- 增加注释
+comment on table product is '产品';
+comment on column product.id is '主键';
+comment on column product.code is '编码';
+comment on column product.name is '名称';
+comment on column product.create_time is '创建时间';
+comment on column product.modify_time is '修改时间';
+comment on column product.unit is '单位';
+comment on column product.price is '单价';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger product_set_modify_time before update on product for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table product enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "product_insert_policy" on product for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "product_delete_policy" on product for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "product_update_policy" on product for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: true
+create policy "product_select_policy" on product for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 厂家
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists manufacturer cascade;
+create table manufacturer (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	is_manage_stock boolean not null default false
+);
+-- 增加注释
+comment on table manufacturer is '厂家';
+comment on column manufacturer.id is '主键';
+comment on column manufacturer.code is '编码';
+comment on column manufacturer.name is '名称';
+comment on column manufacturer.create_time is '创建时间';
+comment on column manufacturer.modify_time is '修改时间';
+comment on column manufacturer.is_manage_stock is '是否管理库存';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger manufacturer_set_modify_time before update on manufacturer for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table manufacturer enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "manufacturer_insert_policy" on manufacturer for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "manufacturer_delete_policy" on manufacturer for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "manufacturer_update_policy" on manufacturer for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: true
+create policy "manufacturer_select_policy" on manufacturer for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 角色-厂家关系
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists role_manufacturer_rela cascade;
+create table role_manufacturer_rela (
+    id uuid primary key default uuid_generate_v4(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	role_id uuid not null references "role"(id),
+	manufacturer_id uuid not null references manufacturer(id),
+	constraint uk_role_manufacturer unique (role_id, manufacturer_id)
+);
+-- 增加注释
+comment on table role_manufacturer_rela is '角色-厂家关系';
+comment on column role_manufacturer_rela.id is '主键';
+comment on column role_manufacturer_rela.create_time is '创建时间';
+comment on column role_manufacturer_rela.modify_time is '修改时间';
+comment on column role_manufacturer_rela.role_id is '角色ID';
+comment on column role_manufacturer_rela.manufacturer_id is '厂家ID';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger role_manufacturer_rela_set_modify_time before update on role_manufacturer_rela for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table role_manufacturer_rela enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "role_manufacturer_rela_insert_policy" on role_manufacturer_rela for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "role_manufacturer_rela_delete_policy" on role_manufacturer_rela for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "role_manufacturer_rela_update_policy" on role_manufacturer_rela for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: 
+--     1. 管理员可以查询所有数据
+--     2. 可以查询自己的角色所对应的数据
+create policy "role_manufacturer_rela_select_policy" on role_manufacturer_rela for select to authenticated using (
+	is_admin()
+	or current_role_id() = role_id
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 角色-工地关系
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists role_site_rela cascade;
+create table role_site_rela (
+    id uuid primary key default uuid_generate_v4(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	role_id uuid not null references "role"(id),
+	site_id uuid not null references site(id),
+	constraint uk_role_site unique (role_id, site_id)
+);
+-- 增加注释
+comment on table role_site_rela is '角色-工地关系';
+comment on column role_site_rela.id is '主键';
+comment on column role_site_rela.create_time is '创建时间';
+comment on column role_site_rela.modify_time is '修改时间';
+comment on column role_site_rela.role_id is '角色ID';
+comment on column role_site_rela.site_id is '工地ID';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger role_site_rela_set_modify_time before update on role_site_rela for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table role_site_rela enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "role_site_rela_insert_policy" on role_site_rela for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "role_site_rela_delete_policy" on role_site_rela for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "role_site_rela_update_policy" on role_site_rela for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: 
+--     1. 管理员可以查询所有数据 or 根据自己的角色查询对应的数据
+create policy "role_site_rela_select_policy" on role_site_rela for select to authenticated using (
+	is_admin()
+	or current_role_id() = role_id
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 库存
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists stock cascade;
+create table stock (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    manufacturer_id uuid not null references manufacturer(id),
+    product_id uuid not null references product(id),
+    quantity decimal(19,4) not null,
+	constraint uk_stock_manufacturer_product unique (manufacturer_id, product_id),
+	constraint ck_stock_quantity_non_negative check (quantity >= 0)
+);
+-- 增加注释
+comment on table stock is '库存';
+comment on column stock.id is '主键';
+comment on column stock.creator is '创建人ID';
+comment on column stock.modifier is '修改人ID';
+comment on column stock.create_time is '创建时间';
+comment on column stock.modify_time is '修改时间';
+comment on column stock.manufacturer_id is '厂家ID';
+comment on column stock.product_id is '产品ID';
+comment on column stock.quantity is '数量';
+-----------------------------------
+-- 私用触发器函数
+create or replace function handle_stock_change()
+returns trigger as $$
+declare
+    v_manufacturer_id uuid;
+    v_product_id uuid;
+    v_delta decimal(19,4); -- 变化的数量
+    v_sign int; -- 符号：入库为 1，出库为 -1
+    
+    -- 定义临时变量用于安全访问 (解决通用表没有 manufacturer_id 的问题)
+    v_record record; 
+    v_record_json jsonb;
+begin
+    -- 1. 确定操作类型和符号
+    if tg_argv[0] = 'in' then
+        v_sign := 1;
+    else
+        v_sign := -1;
+    end if;
+
+    -- 2. 确定使用的是 NEW 数据还是 OLD 数据
+    if (tg_op = 'DELETE') then
+        v_record := old;
+    else
+        v_record := new;
+    end if;
+    
+    -- 转换成 jsonb 以便安全提取字段 (即使字段不存在也不会报错)
+    v_record_json := to_jsonb(v_record);
+
+    -- 3. 获取 Manufacturer ID 和 Product ID
+    --    分情况处理：合同单据直接取值，通用单据联表查询
+    
+    -- 【分支 A】: 合同订单相关 (contract_order_stock_in / out)
+    if (tg_table_name = 'contract_order_stock_in' or tg_table_name = 'contract_order_stock_out') then
+        -- 厂家ID：直接在表里
+        v_manufacturer_id := (v_record_json ->> 'manufacturer_id')::uuid;
+        -- 产品ID：查 contract_order
+        select product_id into v_product_id 
+        from contract_order 
+        where id = (v_record_json ->> 'contract_order_id')::uuid;
+
+    -- 【分支 B】: 通用入库单 (general_stock_in) -> 关联付款方 (Payer)
+    elsif (tg_table_name = 'general_stock_in') then
+        select 
+            gp.payer_manufacturer_id, -- 入库进付款方的库
+            gp.product_id 
+        into v_manufacturer_id, v_product_id
+        from general_purchase gp 
+        where gp.id = (v_record_json ->> 'general_purchase_id')::uuid;
+
+    -- 【分支 C】: 通用出库单 (general_stock_out) -> 关联收款方 (Payee)
+    elsif (tg_table_name = 'general_stock_out') then
+        select 
+            gp.payee_manufacturer_id, -- 出库从收款方的库出
+            gp.product_id 
+        into v_manufacturer_id, v_product_id
+        from general_purchase gp 
+        where gp.id = (v_record_json ->> 'general_purchase_id')::uuid;
+    end if;
+
+    -- 4. 计算库存变化量 (Delta)
+    if (tg_op = 'DELETE') then
+        v_delta := (v_record_json ->> 'quantity')::decimal * v_sign * -1;
+    elsif (tg_op = 'INSERT') then
+        v_delta := (v_record_json ->> 'quantity')::decimal * v_sign;
+    elsif (tg_op = 'UPDATE') then
+        -- 使用 hstore 检查是否修改了禁止修改的字段
+        -- 允许修改的字段: quantity, modifier, modify_time, file_url (如果有), code (如果不允许改code要把code去掉)
+        -- 这里反向思考: 只要 Manufacturer ID / Product ID / 关联单据 ID 没变就行
+        -- 但是为了严谨, 我们只允许修改数量和文件, 其他一律不准改
+        
+        declare
+            v_allowed_cols text[] := array['quantity', 'modifier', 'modify_time', 'file_url', 'code'];
+        begin
+            if (hstore(new) - v_allowed_cols) <> (hstore(old) - v_allowed_cols) then
+                raise exception '库存单据只允许修改数量和附件! 禁止修改关联信息。';
+            end if;
+        end;
+
+        v_delta := (new.quantity - old.quantity) * v_sign;
+    end if;
+
+    -- 5. 执行库存更新 (Upsert)
+    if v_delta is not null and v_delta != 0 and v_manufacturer_id is not null and v_product_id is not null then
+        insert into stock (manufacturer_id, product_id, quantity, creator, modifier)
+        values (v_manufacturer_id, v_product_id, v_delta, coalesce(auth.uid(), (v_record_json ->> 'creator')::uuid), coalesce(auth.uid(), (v_record_json ->> 'creator')::uuid))
+        on conflict (manufacturer_id, product_id) 
+        do update set 
+            quantity = stock.quantity + excluded.quantity,
+            modifier = coalesce(auth.uid(), excluded.modifier),
+            modify_time = current_timestamp;
+    end if;
+
+    return null;
+end;
+$$ language plpgsql set search_path = public;
+-----------------------------------
+-- 绑定触发器
+create trigger stock_set_modifier before update on stock for each row execute function set_modifier();
+create trigger stock_set_modify_time before update on stock for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table stock enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 管理员可以新增
+--     2. 用户只能新增自己的角色对应的厂家的数据
+--     3. 必须是已开启库存管理的厂家的数据
+--     2. 创建人必须是本人
+create policy "stock_insert_policy" on stock for insert to authenticated with check (
+	(
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+		)
+	) and exists (
+		select 1 from manufacturer m where m.is_manage_stock = true and m.id = manufacturer_id
+	) and creator = auth.uid()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+create policy "stock_delete_policy" on stock for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 管理员可以修改所有数据
+--     2. 用户只能修改自己的角色对应的厂家的数据
+--     3. 必须是已开启库存管理的厂家的数据
+--   check: 
+--     1. 修改人必须是当前用户
+create policy "stock_update_policy" on stock for update to authenticated using (
+	(
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+		)
+	) and exists (
+		select 1 from manufacturer m where m.is_manage_stock = true and m.id = manufacturer_id
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员可以查询所有数据
+--     2. 用户只能查看自己的角色对应的厂家的数据
+create policy "stock_select_policy" on stock for select to authenticated using (
+	is_admin()
+	or exists (
+		select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract cascade;
+create table contract (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    site_id uuid not null references site(id),
+    agent_id uuid not null references profile(id),
+	is_confirmed boolean not null default false,
+	is_completed boolean not null default false
+);
+-- 增加注释
+comment on table contract is '合同';
+comment on column contract.id is '主键';
+comment on column contract.code is '编码';
+comment on column contract.name is '名称';
+comment on column contract.creator is '创建人ID';
+comment on column contract.modifier is '修改人ID';
+comment on column contract.create_time is '创建时间';
+comment on column contract.modify_time is '修改时间';
+comment on column contract.site_id is '工地ID';
+comment on column contract.agent_id is '代理人ID';
+comment on column contract.is_confirmed is '是否确认';
+comment on column contract.is_completed is '是否完成';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger trg_01_contract_set_modifier before update on contract for each row execute function set_modifier();
+create trigger trg_02_contract_set_modify_time before update on contract for each row execute function set_modify_time();
+create trigger trg_03_contract_check_bill_status_rules before update on contract for each row execute function check_bill_status_rules();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 非确认+非完成状态才可以新增
+--     3. 管理员可以新增 or (用户新增时必须存在角色-工地关系 and 代理人本人)
+create policy "contract_insert_policy" on contract for insert to authenticated with check (
+	creator = auth.uid()
+	and is_confirmed = false and is_completed = false
+	and (
+		is_admin()
+		or (
+			agent_id = auth.uid()
+			and exists (
+				select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = site_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 管理员可以删除所有 or ((创建人本人 or 代理人本人) and 存在角色-工地关系可以删除)
+--     2. 非确认+非完成状态才可以删除
+create policy "contract_delete_policy" on contract for delete to authenticated using (
+	(
+		is_admin()
+		or (
+			(
+				creator = auth.uid()
+				or agent_id = auth.uid()
+			) and exists (
+				select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = site_id
+			)
+		)
+	) and is_confirmed = false and is_completed = false
+);
+-- update policy:
+--   using:
+--     1. 管理员可以修改所有数据 or ((创建人本人 or 代理人本人) and 存在角色-工地关系可以修改)
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_update_policy" on contract for update to authenticated using (
+	is_admin()
+	or (
+		(
+			creator = auth.uid()
+			or agent_id = auth.uid()
+		) and exists (
+			select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = site_id
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员可以查询所有数据 or ((创建人本人 or 代理人本人) and 存在角色-工地关系可以查询)
+create policy "contract_select_policy" on contract for select to authenticated using (
+	is_admin()
+	or (
+		(
+			creator = auth.uid()
+			or agent_id = auth.uid()
+		) and exists (
+			select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = site_id
+		)
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同_厂家关系
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract_manufacturer_rela cascade;
+create table contract_manufacturer_rela (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_id uuid not null references contract(id),
+	manufacturer_id uuid not null references manufacturer(id),
+	constraint uk_contract_manufacturer unique (contract_id, manufacturer_id)
+);
+-- 增加注释
+comment on table contract_manufacturer_rela is '合同_厂家关系';
+comment on column contract_manufacturer_rela.id is '主键';
+comment on column contract_manufacturer_rela.creator is '创建人ID';
+comment on column contract_manufacturer_rela.modifier is '修改人ID';
+comment on column contract_manufacturer_rela.create_time is '创建时间';
+comment on column contract_manufacturer_rela.modify_time is '修改时间';
+comment on column contract_manufacturer_rela.contract_id is '合同ID';
+comment on column contract_manufacturer_rela.manufacturer_id is '厂家ID';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger contract_manufacturer_rela_set_modifier before update on contract_manufacturer_rela for each row execute function set_modifier();
+create trigger contract_manufacturer_rela_set_modify_time before update on contract_manufacturer_rela for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract_manufacturer_rela enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人本人
+--     2. 合同必须是非确认+非完成状态才可以新增
+--     3. 管理员可以新增 or ((合同创建人本人 or 合同代理人本人) and 存在角色-工地关系 and 存在角色-厂家关系)
+create policy "contract_manufacturer_rela_insert_policy" on contract_manufacturer_rela for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (select 1 from contract c where c.id = contract_id and c.is_confirmed = false and c.is_completed = false)
+	and (
+		is_admin()
+		or (
+			(
+				auth.uid() = (select creator from contract c where c.id = contract_id limit 1)
+				or auth.uid() = (select agent_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_site_rela rsr where rsr.role_id = current_role_id() and rsr.site_id = (select c.site_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_manufacturer_rela rmr where rmr.role_id = current_role_id() and rmr.manufacturer_id = manufacturer_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 合同必须是非确认+非完成状态才可以删除
+--     1. 管理员可以删除 or ((创建人本人 or 合同创建人本人 or 合同代理人本人) and 存在角色-工地关系 and 存在角色-厂家关系)
+create policy "contract_manufacturer_rela_delete_policy" on contract_manufacturer_rela for delete to authenticated using (
+	exists (select 1 from contract c where c.id = contract_id and c.is_confirmed = false and c.is_completed = false)
+	and (
+		is_admin()
+		or (
+			(
+				creator = auth.uid()
+				or auth.uid() = (select creator from contract c where c.id = contract_id limit 1)
+				or auth.uid() = (select agent_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_site_rela rsr where rsr.role_id = current_role_id() and rsr.site_id = (select c.site_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_manufacturer_rela rmr where rmr.role_id = current_role_id() and rmr.manufacturer_id = manufacturer_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 非确认+非完成状态才可以修改
+--     2. 管理员可以修改 or ((创建人本人 or 合同创建人本人 or 合同代理人本人) and 存在角色-工地关系 and 存在角色-厂家关系)
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_manufacturer_rela_update_policy" on contract_manufacturer_rela for update to authenticated using (
+	exists (select 1 from contract c where c.id = contract_id and c.is_confirmed = false and c.is_completed = false)
+	and (
+		is_admin()
+		or (
+			(
+				creator = auth.uid()
+				or auth.uid() = (select creator from contract c where c.id = contract_id limit 1)
+				or auth.uid() = (select agent_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_site_rela rsr where rsr.role_id = current_role_id() and rsr.site_id = (select c.site_id from contract c where c.id = contract_id limit 1)
+			) and exists (
+				select 1 from role_manufacturer_rela rmr where rmr.role_id = current_role_id() and rmr.manufacturer_id = manufacturer_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员可以查询 or ((创建人本人 or 合同创建人本人 or 合同代理人本人) and 存在角色-工地关系 and 存在角色-厂家关系)
+create policy "contract_manufacturer_rela_select_policy" on contract_manufacturer_rela for select to authenticated using (
+	is_admin()
+	or (
+		(
+			creator = auth.uid()
+			or auth.uid() = (select creator from contract c where c.id = contract_id limit 1)
+			or auth.uid() = (select agent_id from contract c where c.id = contract_id limit 1)
+		) and exists (
+			select 1 from role_site_rela rsr where rsr.role_id = current_role_id() and rsr.site_id = (select c.site_id from contract c where c.id = contract_id limit 1)
+		) and exists (
+			select 1 from role_manufacturer_rela rmr where rmr.role_id = current_role_id() and rmr.manufacturer_id = manufacturer_id
+		)
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同订单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract_order cascade;
+create table contract_order (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_id uuid not null references contract(id),
+	product_id uuid not null references product(id),
+    quantity decimal(19,4) not null,
+	is_confirmed boolean not null default false,
+	is_completed boolean not null default false
+);
+-- 增加注释
+comment on table contract_order is '合同订单';
+comment on column contract_order.id is '主键';
+comment on column contract_order.code is '编码';
+comment on column contract_order.creator is '创建人ID';
+comment on column contract_order.modifier is '修改人ID';
+comment on column contract_order.create_time is '创建时间';
+comment on column contract_order.modify_time is '修改时间';
+comment on column contract_order.contract_id is '合同ID';
+comment on column contract_order.product_id is '产品ID';
+comment on column contract_order.quantity is '数量';
+comment on column contract_order.is_confirmed is '是否确认';
+comment on column contract_order.is_completed is '是否完成';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger trg_01_contract_order_set_modifier before update on contract_order for each row execute function set_modifier();
+create trigger trg_02_contract_order_set_modify_time before update on contract_order for each row execute function set_modify_time();
+create trigger trg_03_contract_order_check_bill_status_rules before update on contract_order for each row execute function check_bill_status_rules();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract_order enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 非确认+非完成状态
+--     3. 管理员 or 存在角色-工地关系
+create policy "contract_order_insert_policy" on contract_order for insert to authenticated with check (
+	creator = auth.uid()
+	and is_confirmed = false and is_completed = false
+	and exists (
+		select 1 from contract c where c.id = contract_id and c.is_confirmed = true and c.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = (select c.site_id from contract c where c.id = contract_id)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 非确认+非完成状态
+--     2. 管理员 or 存在角色-工地关系
+create policy "contract_order_delete_policy" on contract_order for delete to authenticated using (
+	is_confirmed = false and is_completed = false
+	and exists (
+		select 1 from contract c where c.id = contract_id and c.is_confirmed = true and c.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = (select c.site_id from contract c where c.id = contract_id)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 存在角色-工地关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_order_update_policy" on contract_order for update to authenticated using (
+	is_admin()
+	or exists (
+		select 1 from role_site_rela r where r.role_id = current_role_id() and r.site_id = (select c.site_id from contract c where c.id = contract_id)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "contract_order_select_policy" on contract_order for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同订单出库单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract_order_stock_out cascade;
+create table contract_order_stock_out (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_order_id uuid not null references contract_order(id),
+	manufacturer_id uuid not null references manufacturer(id),
+    quantity decimal(19,4) not null,
+	file_url text
+);
+-- 增加注释
+comment on table contract_order_stock_out is '合同订单出库单';
+comment on column contract_order_stock_out.id is '主键';
+comment on column contract_order_stock_out.code is '编码';
+comment on column contract_order_stock_out.creator is '创建人ID';
+comment on column contract_order_stock_out.modifier is '修改人ID';
+comment on column contract_order_stock_out.create_time is '创建时间';
+comment on column contract_order_stock_out.modify_time is '修改时间';
+comment on column contract_order_stock_out.contract_order_id is '合同订单ID';
+comment on column contract_order_stock_out.manufacturer_id is '出库厂家ID';
+comment on column contract_order_stock_out.quantity is '数量';
+comment on column contract_order_stock_out.file_url is '文件URL';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger contract_order_stock_out_set_modifier before update on contract_order_stock_out for each row execute function set_modifier();
+create trigger contract_order_stock_out_set_modify_time before update on contract_order_stock_out for each row execute function set_modify_time();
+create trigger trg_stock_update_contract_out after insert or update or delete on contract_order_stock_out for each row execute function handle_stock_change('out');
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract_order_stock_out enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 已确认+非完成状态的对应合同订单
+--     3. 管理员 or 存在角色-厂家关系
+create policy "contract_order_stock_out_insert_policy" on contract_order_stock_out for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-厂家关系
+create policy "contract_order_stock_out_delete_policy" on contract_order_stock_out for delete to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-厂家关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_order_stock_out_update_policy" on contract_order_stock_out for update to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id = manufacturer_id
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "contract_order_stock_out_select_policy" on contract_order_stock_out for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('contract_order_stock_out', '合同订单出库单', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 contract_order_stock_out
+--     2. 路径必须是 contract_order_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+create policy "contract_order_stock_out_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'contract_order_stock_out'
+    and exists (
+		select 1 from contract_order_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_out coso on co.id = coso.contract_order_id
+		where coso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 contract_order_stock_out
+--     2. 路径必须是 contract_order_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+create policy "contract_order_stock_out_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'contract_order_stock_out'
+    and exists (
+		select 1 from contract_order_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_out coso on co.id = coso.contract_order_id
+		where coso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 contract_order_stock_out
+--     2. 路径必须是 contract_order_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+--   check: true
+create policy "contract_order_stock_out_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'contract_order_stock_out'
+    and exists (
+		select 1 from contract_order_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_out coso on co.id = coso.contract_order_id
+		where coso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "contract_order_stock_out_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同订单入库单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract_order_stock_in cascade;
+create table contract_order_stock_in (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_order_id uuid not null references contract_order(id),
+	manufacturer_id uuid not null references manufacturer(id),
+    quantity decimal(19,4) not null,
+	file_url text
+);
+-- 增加注释
+comment on table contract_order_stock_in is '合同订单入库单';
+comment on column contract_order_stock_in.id is '主键';
+comment on column contract_order_stock_in.code is '编码';
+comment on column contract_order_stock_in.creator is '创建人ID';
+comment on column contract_order_stock_in.modifier is '修改人ID';
+comment on column contract_order_stock_in.create_time is '创建时间';
+comment on column contract_order_stock_in.modify_time is '修改时间';
+comment on column contract_order_stock_in.contract_order_id is '合同订单ID';
+comment on column contract_order_stock_in.manufacturer_id is '出库厂家ID';
+comment on column contract_order_stock_in.quantity is '数量';
+comment on column contract_order_stock_in.file_url is '文件URL';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger contract_order_stock_in_set_modifier before update on contract_order_stock_in for each row execute function set_modifier();
+create trigger contract_order_stock_in_set_modify_time before update on contract_order_stock_in for each row execute function set_modify_time();
+create trigger trg_stock_update_contract_in after insert or update or delete on contract_order_stock_in for each row execute function handle_stock_change('in');
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract_order_stock_in enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 已确认+非完成状态的对应合同订单
+--     3. 管理员 or 存在角色-工地关系
+create policy "contract_order_stock_in_insert_policy" on contract_order_stock_in for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id 
+				from contract c join contract_order co on c.id = co.contract_id
+				where co.id = contract_order_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-工地关系
+create policy "contract_order_stock_in_delete_policy" on contract_order_stock_in for delete to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id 
+				from contract c join contract_order co on c.id = co.contract_id
+				where co.id = contract_order_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-工地关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_order_stock_in_update_policy" on contract_order_stock_in for update to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id 
+				from contract c join contract_order co on c.id = co.contract_id
+				where co.id = contract_order_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "contract_order_stock_in_select_policy" on contract_order_stock_in for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('contract_order_stock_in', '合同订单入库单', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 contract_order_stock_in
+--     2. 路径必须是 contract_order_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+create policy "contract_order_stock_in_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'contract_order_stock_in'
+    and exists (
+		select 1 from contract_order_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_in cosi on co.id = cosi.contract_order_id
+		where cosi.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 contract_order_stock_in
+--     2. 路径必须是 contract_order_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+create policy "contract_order_stock_in_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'contract_order_stock_in'
+    and exists (
+		select 1 from contract_order_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_in cosi on co.id = cosi.contract_order_id
+		where cosi.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 contract_order_stock_in
+--     2. 路径必须是 contract_order_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应合同订单
+--   check: true
+create policy "contract_order_stock_in_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'contract_order_stock_in'
+    and exists (
+		select 1 from contract_order_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from contract_order co join contract_order_stock_in cosi on co.id = cosi.contract_order_id
+		where cosi.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "contract_order_stock_in_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 合同订单采购单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists contract_order_purchase cascade;
+create table contract_order_purchase (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_order_id uuid not null references contract_order(id),
+    payer_manufacturer_id uuid not null references manufacturer(id),
+    payee_manufacturer_id uuid not null references manufacturer(id),
+	product_id uuid not null references product(id),
+    quantity decimal(19,4) not null
+);
+-- 增加注释
+comment on table contract_order_purchase is '合同订单采购单';
+comment on column contract_order_purchase.id is '主键';
+comment on column contract_order_purchase.code is '编码';
+comment on column contract_order_purchase.creator is '创建人ID';
+comment on column contract_order_purchase.modifier is '修改人ID';
+comment on column contract_order_purchase.create_time is '创建时间';
+comment on column contract_order_purchase.modify_time is '修改时间';
+comment on column contract_order_purchase.contract_order_id is '合同订单ID';
+comment on column contract_order_purchase.payer_manufacturer_id is '付款厂家ID';
+comment on column contract_order_purchase.payee_manufacturer_id is '收款厂家ID';
+comment on column contract_order_purchase.product_id is '产品ID';
+comment on column contract_order_purchase.quantity is '数量';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger contract_order_purchase_set_modifier before update on contract_order_purchase for each row execute function set_modifier();
+create trigger contract_order_purchase_set_modify_time before update on contract_order_purchase for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table contract_order_purchase enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 已确认+非完成状态的对应合同订单
+--     3. 管理员 or 存在角色-厂家关系
+create policy "contract_order_purchase_insert_policy" on contract_order_purchase for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-厂家关系
+create policy "contract_order_purchase_delete_policy" on contract_order_purchase for delete to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的对应合同订单
+--     2. 管理员 or 存在角色-厂家关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "contract_order_purchase_update_policy" on contract_order_purchase for update to authenticated using (
+	exists (
+		select 1 from contract_order co where co.id = contract_order_id and co.is_confirmed = true and co.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "contract_order_purchase_select_policy" on contract_order_purchase for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 通用采购单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists general_purchase cascade;
+create table general_purchase (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    payer_manufacturer_id uuid not null references manufacturer(id),
+    payee_manufacturer_id uuid not null references manufacturer(id),
+	product_id uuid not null references product(id),
+    quantity decimal(19,4) not null,
+	is_confirmed boolean not null default false,
+	is_completed boolean not null default false
+);
+-- 增加注释
+comment on table general_purchase is '通用采购单';
+comment on column general_purchase.id is '主键';
+comment on column general_purchase.code is '编码';
+comment on column general_purchase.creator is '创建人ID';
+comment on column general_purchase.modifier is '修改人ID';
+comment on column general_purchase.create_time is '创建时间';
+comment on column general_purchase.modify_time is '修改时间';
+comment on column general_purchase.payer_manufacturer_id is '付款厂家ID';
+comment on column general_purchase.payee_manufacturer_id is '收款厂家ID';
+comment on column general_purchase.product_id is '产品ID';
+comment on column general_purchase.quantity is '数量';
+comment on column general_purchase.is_confirmed is '是否确认';
+comment on column general_purchase.is_completed is '是否完成';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger trg_01_general_purchase_set_modifier before update on general_purchase for each row execute function set_modifier();
+create trigger trg_02_general_purchase_set_modify_time before update on general_purchase for each row execute function set_modify_time();
+create trigger trg_03_general_purchase_check_bill_status_rules before update on general_purchase for each row execute function check_bill_status_rules();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table general_purchase enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 未确认+未完成状态
+--     3. 管理员 or 存在角色-厂家关系
+create policy "general_purchase_insert_policy" on general_purchase for insert to authenticated with check (
+	creator = auth.uid()
+	and is_confirmed = false and is_completed = false
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 未确认+未完成状态
+--     2. 管理员 or 存在角色-厂家关系
+create policy "general_purchase_delete_policy" on general_purchase for delete to authenticated using (
+	is_confirmed = false and is_completed = false
+	and (
+		is_admin()
+		or exists (
+			select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 存在角色-厂家关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "general_purchase_update_policy" on general_purchase for update to authenticated using (
+	is_admin()
+	or exists (
+		select 1 from role_manufacturer_rela r where r.role_id = current_role_id() and r.manufacturer_id in (payer_manufacturer_id, payee_manufacturer_id)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "general_purchase_select_policy" on general_purchase for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 通用出库单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists general_stock_out cascade;
+create table general_stock_out (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	general_purchase_id uuid not null references general_purchase(id),
+    quantity decimal(19,4) not null,
+	file_url text
+);
+-- 增加注释
+comment on table general_stock_out is '通用出库单';
+comment on column general_stock_out.id is '主键';
+comment on column general_stock_out.code is '编码';
+comment on column general_stock_out.creator is '创建人ID';
+comment on column general_stock_out.modifier is '修改人ID';
+comment on column general_stock_out.create_time is '创建时间';
+comment on column general_stock_out.modify_time is '修改时间';
+comment on column general_stock_out.general_purchase_id is '通用采购单ID';
+comment on column general_stock_out.quantity is '数量';
+comment on column general_stock_out.file_url is '文件URL';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger general_stock_out_set_modifier before update on general_stock_out for each row execute function set_modifier();
+create trigger general_stock_out_set_modify_time before update on general_stock_out for each row execute function set_modify_time();
+create trigger trg_stock_update_general_out after insert or update or delete on general_stock_out for each row execute function handle_stock_change('out');
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table general_stock_out enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 已确认+非完成状态的对应通用采购单
+--     3. 管理员 or 存在角色-厂家关系
+create policy "general_stock_out_insert_policy" on general_stock_out for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payee_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 已确认+非完成状态的对应通用采购单
+--     2. 管理员 or 存在角色-厂家关系
+create policy "general_stock_out_delete_policy" on general_stock_out for delete to authenticated using (
+	exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payee_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的对应通用采购单
+--     2. 管理员 or 存在角色-厂家关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "general_stock_out_update_policy" on general_stock_out for update to authenticated using (
+	exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payee_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "general_stock_out_select_policy" on general_stock_out for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('general_stock_out', '通用出库单', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 general_stock_out
+--     2. 路径必须是 general_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+create policy "general_stock_out_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'general_stock_out'
+    and exists (
+		select 1 from general_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_out gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 general_stock_out
+--     2. 路径必须是 general_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+create policy "general_stock_out_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'general_stock_out'
+    and exists (
+		select 1 from general_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_out gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 general_stock_out
+--     2. 路径必须是 general_stock_out/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+--   check: true
+create policy "general_stock_out_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'general_stock_out'
+    and exists (
+		select 1 from general_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_out gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "general_stock_out_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 通用入库单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists general_stock_in cascade;
+create table general_stock_in (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	general_purchase_id uuid not null references general_purchase(id),
+    quantity decimal(19,4) not null,
+	file_url text
+);
+-- 增加注释
+comment on table general_stock_in is '通用入库单';
+comment on column general_stock_in.id is '主键';
+comment on column general_stock_in.code is '编码';
+comment on column general_stock_in.creator is '创建人ID';
+comment on column general_stock_in.modifier is '修改人ID';
+comment on column general_stock_in.create_time is '创建时间';
+comment on column general_stock_in.modify_time is '修改时间';
+comment on column general_stock_in.general_purchase_id is '通用采购单ID';
+comment on column general_stock_in.quantity is '数量';
+comment on column general_stock_in.file_url is '文件URL';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger general_stock_in_set_modifier before update on general_stock_in for each row execute function set_modifier();
+create trigger general_stock_in_set_modify_time before update on general_stock_in for each row execute function set_modify_time();
+create trigger trg_stock_update_general_in after insert or update or delete on general_stock_in for each row execute function handle_stock_change('in');
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table general_stock_in enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 已确认+非完成状态的对应通用采购单
+--     3. 管理员 or 存在角色-厂家关系
+create policy "general_stock_in_insert_policy" on general_stock_in for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payer_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 已确认+非完成状态的对应通用采购单
+--     2. 管理员 or 存在角色-厂家关系
+create policy "general_stock_in_delete_policy" on general_stock_in for delete to authenticated using (
+	exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payer_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的对应通用采购单
+--     2. 管理员 or 存在角色-厂家关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "general_stock_in_update_policy" on general_stock_in for update to authenticated using (
+	exists (
+		select 1 from general_purchase gp where gp.id = general_purchase_id and gp.is_confirmed = true and gp.is_completed = false
+	)
+	and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_manufacturer_rela r 
+			where r.role_id = current_role_id() and r.manufacturer_id = (
+				select gp.payer_manufacturer_id from general_purchase gp where gp.id = general_purchase_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using: true
+create policy "general_stock_in_select_policy" on general_stock_in for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('general_stock_in', '通用入库单', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 general_stock_in
+--     2. 路径必须是 general_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+create policy "general_stock_in_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'general_stock_in'
+    and exists (
+		select 1 from general_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_in gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 general_stock_in
+--     2. 路径必须是 general_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+create policy "general_stock_in_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'general_stock_in'
+    and exists (
+		select 1 from general_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_in gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 general_stock_in
+--     2. 路径必须是 general_stock_in/单据id.后缀
+--     3. 已确认+非完成状态的对应通用采购单
+--   check: true
+create policy "general_stock_in_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'general_stock_in'
+    and exists (
+		select 1 from general_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 
+		from general_purchase gp join general_stock_in gso on gp.id = gso.general_purchase_id
+		where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "general_stock_in_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 对账单
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists "statement" cascade;
+create table "statement" (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	contract_id uuid not null references contract(id),
+    start_time timestamptz not null,
+    end_time timestamptz not null,
+	file_url text,
+	is_confirmed boolean not null default false,
+	is_completed boolean not null default false
+);
+-- 增加注释
+comment on table "statement" is '对账单';
+comment on column "statement".id is '主键';
+comment on column "statement".code is '编码';
+comment on column "statement".creator is '创建人ID';
+comment on column "statement".modifier is '修改人ID';
+comment on column "statement".create_time is '创建时间';
+comment on column "statement".modify_time is '修改时间';
+comment on column "statement".contract_id is '合同ID';
+comment on column "statement".start_time is '开始时间';
+comment on column "statement".end_time is '结束时间';
+comment on column "statement".file_url is '文件URL';
+comment on column "statement".is_confirmed is '是否确认';
+comment on column "statement".is_completed is '是否完成';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger trg_01_statement_set_modifier before update on "statement" for each row execute function set_modifier();
+create trigger trg_02_statement_set_modify_time before update on "statement" for each row execute function set_modify_time();
+create trigger trg_03_statement_check_bill_status_rules before update on "statement" for each row execute function check_bill_status_rules();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table "statement" enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 未确认+非完成状态的对账单
+--     3. 已确认+非完成状态的合同
+--     4. 管理员 or 存在角色-工地关系
+create policy "statement_insert_policy" on "statement" for insert to authenticated with check (
+	creator = auth.uid()
+	and is_confirmed = false and is_completed = false
+	and exists (
+		select 1 from contract c where c.id = contract_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id from contract c where c.id = contract_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 未确认+非完成状态的对账单
+--     2. 已确认+非完成状态的合同
+--     3. 管理员 or 存在角色-工地关系
+create policy "statement_delete_policy" on "statement" for delete to authenticated using (
+	is_confirmed = false and is_completed = false
+	and exists (
+		select 1 from contract c where c.id = contract_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id from contract c where c.id = contract_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 已确认+非完成状态的合同
+--     2. 管理员 or 存在角色-工地关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "statement_update_policy" on "statement" for update to authenticated using (
+	exists (
+		select 1 from contract c where c.id = contract_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id from contract c where c.id = contract_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员 or 存在角色-工地关系
+create policy "statement_select_policy" on "statement" for select to authenticated using (
+	is_admin()
+	or exists (
+		select 1 
+		from role_site_rela r 
+		where r.role_id = current_role_id() and r.site_id = (
+			select c.site_id from contract c where c.id = contract_id
+		)
+	)
+);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('statement', '对账单', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 statement
+--     2. 路径必须是 statement/单据id.后缀
+--     3. 未确认+非完成状态的对账单
+--     4. 已确认+非完成状态的合同
+create policy "statement_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'statement'
+    and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and s.is_confirmed = false and s.is_completed = false
+	) and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and c.is_confirmed = true and c.is_completed = false
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 statement
+--     2. 路径必须是 statement/单据id.后缀
+--     3. 未确认+非完成状态的对账单
+--     4. 已确认+非完成状态的合同
+create policy "statement_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'statement'
+    and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and s.is_confirmed = false and s.is_completed = false
+	) and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and c.is_confirmed = true and c.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 statement
+--     2. 路径必须是 statement/单据id.后缀
+--     3. 未确认+非完成状态的对账单
+--     4. 已确认+非完成状态的合同
+--   check: true
+create policy "statement_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'statement'
+    and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and exists (
+		select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and s.is_confirmed = false and s.is_completed = false
+	) and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and c.is_confirmed = true and c.is_completed = false
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "statement_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 对账单_产品详情
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists statement_material_detail cascade;
+create table statement_material_detail (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	statement_id uuid not null references "statement"(id),
+	product_id uuid not null references product(id),
+    quantity decimal(19,4) not null,
+    amount decimal(19,4) not null
+);
+-- 增加注释
+comment on table statement_material_detail is '对账单_产品详情';
+comment on column statement_material_detail.id is '主键';
+comment on column statement_material_detail.creator is '创建人ID';
+comment on column statement_material_detail.modifier is '修改人ID';
+comment on column statement_material_detail.create_time is '创建时间';
+comment on column statement_material_detail.modify_time is '修改时间';
+comment on column statement_material_detail.statement_id is '对账单ID';
+comment on column statement_material_detail.product_id is '产品ID';
+comment on column statement_material_detail.quantity is '数量';
+comment on column statement_material_detail.amount is '金额';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger statement_material_detail_set_modifier before update on statement_material_detail for each row execute function set_modifier();
+create trigger statement_material_detail_set_modify_time before update on statement_material_detail for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table statement_material_detail enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 未确认+非完成状态的对账单
+--     3. 已确认+非完成状态的合同
+--     4. 管理员 or 存在角色-工地关系
+create policy "statement_material_detail_insert_policy" on statement_material_detail for insert to authenticated with check (
+	creator = auth.uid()
+	and exists (
+		select 1 from "statement" s where s.id = statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = statement_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 未确认+非完成状态的对账单
+--     2. 已确认+非完成状态的合同
+--     3. 管理员 or 存在角色-工地关系
+create policy "statement_material_detail_delete_policy" on statement_material_detail for delete to authenticated using (
+	exists (
+		select 1 from "statement" s where s.id = statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = statement_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 未确认+非完成状态的对账单
+--     2. 已确认+非完成状态的合同
+--     3. 管理员 or 存在角色-工地关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "statement_material_detail_update_policy" on statement_material_detail for update to authenticated using (
+	exists (
+		select 1 from "statement" s where s.id = statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = statement_id
+			)
+		)
+	)
+) with check (
+	modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员 or 存在角色-工地关系
+create policy "statement_material_detail_select_policy" on statement_material_detail for select to authenticated using (
+	is_admin()
+	or exists (
+		select 1 
+		from role_site_rela r 
+		where r.role_id = current_role_id() and r.site_id = (
+			select c.site_id
+			from contract c join "statement" s on c.id = s.contract_id
+			where s.id = statement_id
+		)
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 对账单_其他费用项
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists statement_other_expenses_item cascade;
+create table statement_other_expenses_item (
+    id uuid primary key default uuid_generate_v4(),
+    code varchar(20) not null unique,
+    name varchar(200) not null,
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp
+);
+-- 增加注释
+comment on table statement_other_expenses_item is '对账单_其他费用项';
+comment on column statement_other_expenses_item.id is '主键';
+comment on column statement_other_expenses_item.code is '编码';
+comment on column statement_other_expenses_item.name is '名称';
+comment on column statement_other_expenses_item.create_time is '创建时间';
+comment on column statement_other_expenses_item.modify_time is '修改时间';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger statement_other_expenses_item_set_modify_time before update on statement_other_expenses_item for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table statement_other_expenses_item enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 只有管理员才能新增
+create policy "statement_other_expenses_item_insert_policy" on statement_other_expenses_item for insert to authenticated with check (
+	is_admin()
+);
+-- delete policy:
+--   using:
+--     1. 只有管理员才能删除
+--   不能删除已经被使用的数据(外键实现)
+create policy "statement_other_expenses_item_delete_policy" on statement_other_expenses_item for delete to authenticated using (
+	is_admin()
+);
+-- update policy:
+--   using:
+--     1. 只有管理员才能修改
+--   check: true
+create policy "statement_other_expenses_item_update_policy" on statement_other_expenses_item for update to authenticated using (
+    is_admin()
+) with check (true);
+-- select policy:
+--   using: true
+create policy "statement_other_expenses_item_select_policy" on statement_other_expenses_item for select to authenticated using (true);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 对账单_其他费用项详情
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists statement_other_expenses_detail cascade;
+create table statement_other_expenses_detail (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	statement_id uuid not null references "statement"(id),
+	item_id uuid not null references statement_other_expenses_item(id),
+    amount decimal(19,4) not null
+);
+-- 增加注释
+comment on table statement_other_expenses_detail is '对账单_其他费用项详情';
+comment on column statement_other_expenses_detail.id is '主键';
+comment on column statement_other_expenses_detail.creator is '创建人ID';
+comment on column statement_other_expenses_detail.modifier is '修改人ID';
+comment on column statement_other_expenses_detail.create_time is '创建时间';
+comment on column statement_other_expenses_detail.modify_time is '修改时间';
+comment on column statement_other_expenses_detail.statement_id is '对账单ID';
+comment on column statement_other_expenses_detail.item_id is '对账单_其他费用项ID';
+comment on column statement_other_expenses_detail.amount is '金额';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger statement_other_expenses_detail_set_modifier before update on statement_other_expenses_detail for each row execute function set_modifier();
+create trigger statement_other_expenses_detail_set_modify_time before update on statement_other_expenses_detail for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table statement_other_expenses_detail enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 未确认+非完成状态的对账单
+--     3. 已确认+非完成状态的合同
+--     4. 管理员 or 存在角色-工地关系
+create policy "statement_other_expenses_detail_insert_policy" on statement_other_expenses_detail as soed for insert to authenticated with check (
+	soed.creator = auth.uid()
+	and exists (
+		select 1 from "statement" s where s.id = soed.statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = soed.statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = soed.statement_id
+			)
+		)
+	)
+);
+-- delete policy:
+--   using:
+--     1. 未确认+非完成状态的对账单
+--     2. 已确认+非完成状态的合同
+--     3. 管理员 or 存在角色-工地关系
+create policy "statement_other_expenses_detail_delete_policy" on statement_other_expenses_detail as soed for delete to authenticated using (
+	exists (
+		select 1 from "statement" s where s.id = soed.statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = soed.statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = soed.statement_id
+			)
+		)
+	)
+);
+-- update policy:
+--   using:
+--     1. 未确认+非完成状态的对账单
+--     2. 已确认+非完成状态的合同
+--     3. 管理员 or 存在角色-工地关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "statement_other_expenses_detail_update_policy" on statement_other_expenses_detail as soed for update to authenticated using (
+	exists (
+		select 1 from "statement" s where s.id = soed.statement_id and s.is_confirmed = false and s.is_completed = false
+	)
+	and exists (
+		select 1 
+		from contract c join "statement" s on c.id = s.contract_id
+		where s.id = soed.statement_id and c.is_confirmed = true and c.is_completed = false
+	) and (
+		is_admin()
+		or exists (
+			select 1 
+			from role_site_rela r 
+			where r.role_id = current_role_id() and r.site_id = (
+				select c.site_id
+				from contract c join "statement" s on c.id = s.contract_id
+				where s.id = soed.statement_id
+			)
+		)
+	)
+) with check (
+	soed.modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员 or 存在角色-工地关系
+create policy "statement_other_expenses_detail_select_policy" on statement_other_expenses_detail as soed for select to authenticated using (
+	is_admin()
+	or exists (
+		select 1 
+		from role_site_rela r 
+		where r.role_id = current_role_id() and r.site_id = (
+			select c.site_id
+			from contract c join "statement" s on c.id = s.contract_id
+			where s.id = soed.statement_id
+		)
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 发票
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists invoice cascade;
+create table invoice (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+    invoice_no varchar(20) not null unique,
+    invoice_title varchar(200) not null,
+    tax_no varchar(20) not null,
+    amount decimal(19,4) not null,
+    tax_amount decimal(19,4) not null,
+    issued_time timestamptz not null,
+	file_url text
+);
+-- 增加注释
+comment on table invoice is '发票';
+comment on column invoice.id is '主键';
+comment on column invoice.creator is '创建人ID';
+comment on column invoice.modifier is '修改人ID';
+comment on column invoice.create_time is '创建时间';
+comment on column invoice.modify_time is '修改时间';
+comment on column invoice.invoice_no is '发票号码';
+comment on column invoice.invoice_title is '发票抬头';
+comment on column invoice.tax_no is '税号';
+comment on column invoice.amount is '总金额';
+comment on column invoice.tax_amount is '总税额';
+comment on column invoice.issued_time is '开票日期';
+comment on column invoice.file_url is '文件URL';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger invoice_set_modifier before update on invoice for each row execute function set_modifier();
+create trigger invoice_set_modify_time before update on invoice for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table invoice enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+create policy "invoice_insert_policy" on invoice as i for insert to authenticated with check (
+	i.creator = auth.uid()
+);
+-- delete policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 不能存在对账单_发票关系
+create policy "invoice_delete_policy" on invoice as i for delete to authenticated using (
+	(
+		is_admin()
+		or i.creator = auth.uid()
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = i.id
+	)
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 不能存在对账单_发票关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "invoice_update_policy" on invoice as i for update to authenticated using (
+	(
+		is_admin()
+		or i.creator = auth.uid()
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = i.id
+	)
+) with check (
+	i.modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员 or 创建人本人
+create policy "invoice_select_policy" on invoice as i for select to authenticated using (
+	is_admin()
+	or i.creator = auth.uid()
+);
+-----------------------------------
+-- 存储桶
+insert into storage.buckets (id, name, public) values ('invoice', '发票', true) on conflict (id) do nothing;
+-- 设置 policy
+-- insert policy
+--   check:
+--     1. 操作的必须是 invoice
+--     2. 路径必须是 invoice/单据id.后缀
+create policy "invoice_insert_policy" on storage.objects for insert to authenticated with check (
+    bucket_id = 'invoice'
+    and exists (
+		select 1 from invoice i where i.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	)
+);
+-- delete policy
+--   using:
+--     1. 操作的必须是 invoice
+--     2. 路径必须是 invoice/单据id.后缀
+--     3. 不能存在对账单_发票关系
+create policy "invoice_delete_policy" on storage.objects for delete to authenticated using (
+    bucket_id = 'invoice'
+    and exists (
+		select 1 from invoice i where i.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	)
+);
+-- update policy:
+--   using:
+--     1. 操作的必须是 invoice
+--     2. 路径必须是 invoice/单据id.后缀
+--     3. 不能存在对账单_发票关系
+--   check: true
+create policy "invoice_update_policy" on storage.objects for update to authenticated using (
+    bucket_id = 'invoice'
+    and exists (
+		select 1 from invoice i where i.id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = regexp_replace(name, '\.[^.]+$', '')::uuid
+	)
+) with check (true);
+-- select policy:
+--   using: true
+create policy "invoice_select_policy" on storage.objects for select to authenticated using (true);
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 发票详情
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists invoice_detail cascade;
+create table invoice_detail (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	invoice_id uuid not null references invoice(id),
+	item_name varchar(200) not null,
+    spec varchar(200),
+    quantity decimal(19,4) not null,
+    price decimal(19,4) not null,
+    tax_rate decimal(19,4) not null,
+    amount decimal(19,4) not null
+);
+-- 增加注释
+comment on table invoice_detail is '发票详情';
+comment on column invoice_detail.id is '主键';
+comment on column invoice_detail.creator is '创建人ID';
+comment on column invoice_detail.modifier is '修改人ID';
+comment on column invoice_detail.create_time is '创建时间';
+comment on column invoice_detail.modify_time is '修改时间';
+comment on column invoice_detail.invoice_id is '发票ID';
+comment on column invoice_detail.item_name is '项目名称';
+comment on column invoice_detail.spec is '规格型号';
+comment on column invoice_detail.quantity is '数量';
+comment on column invoice_detail.price is '单价';
+comment on column invoice_detail.tax_rate is '税率';
+comment on column invoice_detail.amount is '金额';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger invoice_detail_set_modifier before update on invoice_detail for each row execute function set_modifier();
+create trigger invoice_detail_set_modify_time before update on invoice_detail for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table invoice_detail enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 不能存在对账单_发票关系
+create policy "invoice_detail_insert_policy" on invoice_detail as inv_d for insert to authenticated with check (
+	inv_d.creator = auth.uid()
+	and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = inv_d.invoice_id
+	)
+);
+-- delete policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 不能存在对账单_发票关系
+create policy "invoice_detail_delete_policy" on invoice_detail as inv_d for delete to authenticated using (
+	(
+		is_admin()
+		or inv_d.creator = auth.uid()
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = inv_d.invoice_id
+	)
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 不能存在对账单_发票关系
+--   check: 
+--     1. 修改人必须是本人
+create policy "invoice_detail_update_policy" on invoice_detail as inv_d for update to authenticated using (
+	(
+		is_admin()
+		or inv_d.creator = auth.uid()
+	) and not exists (
+		select 1 from statement_invoice_rela sir where sir.invoice_id = inv_d.invoice_id
+	)
+) with check (
+	inv_d.modifier = auth.uid()
+);
+-- select policy:
+--   using:
+--     1. 管理员 or 创建人本人
+create policy "invoice_detail_select_policy" on invoice_detail as inv_d for select to authenticated using (
+	is_admin()
+	or inv_d.creator = auth.uid()
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 对账单_发票关系
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists statement_invoice_rela cascade;
+create table statement_invoice_rela (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	statement_id uuid not null references "statement"(id),
+	invoice_id uuid not null references invoice(id),
+	constraint uk_statement_invoice unique (statement_id, invoice_id)
+);
+-- 增加注释
+comment on table statement_invoice_rela is '对账单_发票关系';
+comment on column statement_invoice_rela.id is '主键';
+comment on column statement_invoice_rela.creator is '创建人ID';
+comment on column statement_invoice_rela.modifier is '修改人ID';
+comment on column statement_invoice_rela.create_time is '创建时间';
+comment on column statement_invoice_rela.modify_time is '修改时间';
+comment on column statement_invoice_rela.statement_id is '对账单ID';
+comment on column statement_invoice_rela.invoice_id is '发票ID';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger statement_invoice_rela_set_modifier before update on statement_invoice_rela for each row execute function set_modifier();
+create trigger statement_invoice_rela_set_modify_time before update on statement_invoice_rela for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table statement_invoice_rela enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人必须是本人
+--     2. 对账单必须是已确认未完成的状态
+create policy "statement_invoice_rela_insert_policy" on statement_invoice_rela as sir for insert to authenticated with check (
+	sir.creator = auth.uid()
+	and exists (
+		select 1 from "statement" s where s.id = sir.statement_id and s.is_confirmed = true and s.is_completed = false
+	)
+);
+-- delete policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 对账单必须是已确认未完成的状态
+create policy "statement_invoice_rela_delete_policy" on statement_invoice_rela as sir for delete to authenticated using (
+	(
+		is_admin()
+		or sir.creator = auth.uid()
+	) and exists (
+		select 1 from "statement" s where s.id = sir.statement_id and s.is_confirmed = true and s.is_completed = false
+	)
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 对账单必须是已确认未完成的状态
+--   check: 
+--     1. 修改人必须是本人
+create policy "statement_invoice_rela_update_policy" on statement_invoice_rela as sir for update to authenticated using (
+	(
+		is_admin()
+		or sir.creator = auth.uid()
+	) and exists (
+		select 1 from "statement" s where s.id = sir.statement_id and s.is_confirmed = true and s.is_completed = false
+	)
+) with check (
+	sir.modifier = auth.uid()
+);
+-- select policy:
+--   using: 
+--     1. 管理员 or 创建人本人
+create policy "statement_invoice_rela_select_policy" on statement_invoice_rela as sir for select to authenticated using (
+	is_admin()
+	or sir.creator = auth.uid()
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 待办
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists todo cascade;
+create table todo (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	todo_title varchar(200) not null,
+	todo_content text,
+	todo_type varchar(50),
+	todo_id uuid,
+	todo_path varchar(255),
+	todo_ext_params jsonb default '{}'::jsonb,
+	todo_due_time timestamptz,
+	is_completed boolean not null default false
+);
+-- 增加注释
+comment on table todo is '待办事项';
+comment on column todo.id is '主键';
+comment on column todo.creator is '创建人ID';
+comment on column todo.modifier is '修改人ID';
+comment on column todo.create_time is '创建时间';
+comment on column todo.modify_time is '修改时间';
+comment on column todo.todo_title is '标题';
+comment on column todo.todo_content is '内容';
+comment on column todo.todo_type is '类型';
+comment on column todo.todo_id is '单据ID';
+comment on column todo.todo_path is '路径';
+comment on column todo.todo_ext_params is '扩展参数';
+comment on column todo.todo_due_time is '截止时间';
+comment on column todo.is_completed is '是否完成';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger todo_set_modifier before update on todo for each row execute function set_modifier();
+create trigger todo_set_modify_time before update on todo for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table todo enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人本人
+--     2. 未完成状态
+create policy "todo_insert_policy" on todo as t for insert to authenticated with check (
+	t.creator = auth.uid()
+	and t.is_completed = false
+);
+-- delete policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--     2. 未完成状态
+create policy "todo_delete_policy" on todo as t for delete to authenticated using (
+	(
+		is_admin()
+		or t.creator = auth.uid()
+	)
+	and t.is_completed = false
+);
+-- update policy:
+--   using: 
+--     1. 管理员 or 创建人本人
+--     2. 未完成状态
+--   check: 
+--     1. 修改人本人
+create policy "todo_update_policy" on todo as t for update to authenticated using (
+	(
+		is_admin()
+		or t.creator = auth.uid()
+	)
+	and t.is_completed = false
+) with check (
+	t.modifier = auth.uid()
+);
+-- select policy:
+--   using: 
+--     1. 管理员 or 存在角色-待办关系
+create policy "todo_select_policy" on todo as t for select to authenticated using (
+	is_admin()
+	or exists (
+		select 1 from role_todo_rela r where r.role_id = current_role_id() and r.todo_id = t.id
+	)
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+-----------------------------------
+--------- 角色-待办关系
+-----------------------------------
+-----------------------------------
+-- 创建表
+drop table if exists role_todo_rela cascade;
+create table role_todo_rela (
+    id uuid primary key default uuid_generate_v4(),
+    creator uuid not null references profile(id) default auth.uid(),
+    modifier uuid not null references profile(id) default auth.uid(),
+    create_time timestamptz not null default current_timestamp,
+    modify_time timestamptz not null default current_timestamp,
+	role_id uuid not null references "role"(id),
+	todo_id uuid not null references todo(id),
+	constraint uk_role_todo unique (role_id, todo_id)
+);
+-- 增加注释
+comment on table role_todo_rela is '角色-待办关系';
+comment on column role_todo_rela.id is '主键';
+comment on column role_todo_rela.creator is '创建人ID';
+comment on column role_todo_rela.modifier is '修改人ID';
+comment on column role_todo_rela.create_time is '创建时间';
+comment on column role_todo_rela.modify_time is '修改时间';
+comment on column role_todo_rela.role_id is '角色ID';
+comment on column role_todo_rela.todo_id is '待办ID';
+-----------------------------------
+-- 私用触发器函数
+-----------------------------------
+-- 绑定触发器
+create trigger role_todo_rela_set_modifier before update on role_todo_rela for each row execute function set_modifier();
+create trigger role_todo_rela_set_modify_time before update on role_todo_rela for each row execute function set_modify_time();
+-----------------------------------
+-- 设置行级安全策略 (RLS)
+alter table role_todo_rela enable row level security;
+-- 设置 policy
+-- insert policy:
+--   check:
+--     1. 创建人本人
+--     2. 未完成状态的待办
+create policy "role_todo_rela_insert_policy" on role_todo_rela as r for insert to authenticated with check (
+	r.creator = auth.uid()
+	and exists (
+		select 1 from todo t where t.id = r.todo_id and t.is_completed = false
+	)
+);
+-- delete policy:
+--   using:
+--     1. 管理员 or 创建人本人
+create policy "role_todo_rela_delete_policy" on role_todo_rela as r for delete to authenticated using (
+	is_admin()
+	or r.creator = auth.uid()
+);
+-- update policy:
+--   using:
+--     1. 管理员 or 创建人本人
+--   check:
+--     1. 修改人本人
+create policy "role_todo_rela_update_policy" on role_todo_rela as r for update to authenticated using (
+	is_admin()
+	or r.creator = auth.uid()
+) with check (
+	r.modifier = auth.uid()
+);
+-- select policy:
+--   using: 
+--     1. 管理员 or 对应的角色
+create policy "role_todo_rela_select_policy" on role_todo_rela as r for select to authenticated using (
+	is_admin()
+	or current_role_id() = r.role_id
+);
+-----------------------------------
+-- 存储桶
+-----------------------------------
+-- 初始化数据
+
+
+---------------------------------------------------------
+-- 外键索引
+create index if not exists idx_profile_role_id on profile(role_id);
+create index if not exists idx_role_manufacturer_role on role_manufacturer_rela(role_id);
+create index if not exists idx_role_manufacturer_mfr on role_manufacturer_rela(manufacturer_id);
+create index if not exists idx_role_site_role on role_site_rela(role_id);
+create index if not exists idx_role_site_site on role_site_rela(site_id);
+create index if not exists idx_role_todo_role on role_todo_rela(role_id);
+create index if not exists idx_role_todo_todo on role_todo_rela(todo_id);
+create index if not exists idx_contract_site on contract(site_id);
+create index if not exists idx_contract_agent on contract(agent_id);
+create index if not exists idx_contract_mfr_contract on contract_manufacturer_rela(contract_id);
+create index if not exists idx_contract_mfr_mfr on contract_manufacturer_rela(manufacturer_id);
+create index if not exists idx_contract_order_contract on contract_order(contract_id);
+create index if not exists idx_contract_order_product on contract_order(product_id);
+create index if not exists idx_co_stock_out_order on contract_order_stock_out(contract_order_id);
+create index if not exists idx_co_stock_out_mfr on contract_order_stock_out(manufacturer_id);
+create index if not exists idx_co_stock_in_order on contract_order_stock_in(contract_order_id);
+create index if not exists idx_co_stock_in_mfr on contract_order_stock_in(manufacturer_id);
+create index if not exists idx_co_purchase_order on contract_order_purchase(contract_order_id);
+create index if not exists idx_co_purchase_payer on contract_order_purchase(payer_manufacturer_id);
+create index if not exists idx_co_purchase_payee on contract_order_purchase(payee_manufacturer_id);
+create index if not exists idx_co_purchase_product on contract_order_purchase(product_id);
+create index if not exists idx_gp_payer on general_purchase(payer_manufacturer_id);
+create index if not exists idx_gp_payee on general_purchase(payee_manufacturer_id);
+create index if not exists idx_gp_product on general_purchase(product_id);
+create index if not exists idx_gen_stock_out_gp on general_stock_out(general_purchase_id);
+create index if not exists idx_gen_stock_in_gp on general_stock_in(general_purchase_id);
+create index if not exists idx_statement_contract on "statement"(contract_id);
+create index if not exists idx_st_mat_detail_st on statement_material_detail(statement_id);
+create index if not exists idx_st_mat_detail_prod on statement_material_detail(product_id);
+create index if not exists idx_st_other_detail_st on statement_other_expenses_detail(statement_id);
+create index if not exists idx_st_other_detail_item on statement_other_expenses_detail(item_id);
+create index if not exists idx_st_inv_rela_st on statement_invoice_rela(statement_id);
+create index if not exists idx_st_inv_rela_inv on statement_invoice_rela(invoice_id);
+create index if not exists idx_inv_detail_inv on invoice_detail(invoice_id);

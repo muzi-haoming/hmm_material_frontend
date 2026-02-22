@@ -6,6 +6,10 @@
         <input class="input disabled" type="text" v-model="form.name" disabled placeholder="未设置" />
       </view>
       <view class="form-item">
+        <text class="label">真实姓名</text>
+        <input class="input disabled" type="text" v-model="form.full_name" disabled placeholder="未设置" />
+      </view>
+      <view class="form-item">
         <text class="label">昵称</text>
         <input class="input disabled" type="text" v-model="form.nickname" disabled placeholder="未设置" />
       </view>
@@ -51,6 +55,7 @@ interface RoleOption {
 const form = ref({
   id: '',
   name: '',
+  full_name: '',
   nickname: '',
   phone: '',
   email: '',
@@ -72,7 +77,7 @@ onLoad(async (options: any) => {
 });
 
 const fetchRoles = async () => {
-  const { data } = await supabase.from('user_role').select('id, name');
+  const { data } = await supabase.from('role').select('id, name');
   if (data) roles.value = data;
 };
 
@@ -88,6 +93,7 @@ const loadData = async (id: string) => {
   
   if (data) {
     form.value.name = data.name;
+    form.value.full_name = data.full_name || '';
     form.value.nickname = data.nickname || '';
     form.value.phone = data.phone || '';
     form.value.email = data.email || '';
@@ -110,20 +116,29 @@ const handleSave = async () => {
 
   loading.value = true;
   
-  const { error } = await supabase
-    .from('profile')
-    .update({ role_id: form.value.role_id })
-    .eq('id', form.value.id);
+  try {
+      const { error } = await supabase
+        .from('profile')
+        .update({ role_id: form.value.role_id })
+        .eq('id', form.value.id);
 
-  loading.value = false;
+      if (error) throw error;
 
-  if (error) {
-    uni.showToast({ title: '保存失败: ' + error.message, icon: 'none' });
-  } else {
-    uni.showToast({ title: '保存成功', icon: 'success' });
-    setTimeout(() => {
-      uni.navigateBack();
-    }, 1500);
+      uni.showToast({ title: '保存成功', icon: 'success' });
+      setTimeout(() => {
+        uni.navigateBack();
+      }, 1500);
+  } catch (e: any) {
+      console.error('Profile save error:', e);
+      const msg = e.message || (typeof e === 'string' ? e : '保存失败');
+      // Detect 403/401 and suggest re-login
+      if (e.statusCode === 403 || e.code === '42501' || (e.details && e.details.includes('policy'))) {
+           uni.showToast({ title: '无权限，请尝试重新登录', icon: 'none', duration: 3000 });
+      } else {
+           uni.showToast({ title: '保存失败: ' + msg, icon: 'none' });
+      }
+  } finally {
+      loading.value = false;
   }
 };
 

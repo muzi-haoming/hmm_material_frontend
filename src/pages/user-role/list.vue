@@ -9,7 +9,10 @@
       >
         <view class="item-content">
           <text class="item-name">{{ item.name }}</text>
-          <text class="item-detail">编码: {{ item.code }}</text>
+          <view class="detail-row">
+            <text class="detail-label">编码：</text>
+            <text class="detail-value">{{ item.code }}</text>
+          </view>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -78,8 +81,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -120,6 +128,25 @@ onShow(() => {
   font-weight: bold;
   color: #333;
   margin-bottom: 5px;
+}
+
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {

@@ -113,8 +113,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 

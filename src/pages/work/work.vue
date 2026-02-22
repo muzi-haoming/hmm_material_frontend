@@ -46,36 +46,73 @@
           <text class="grid-label">{{ item.label }}</text>
         </view>
       </view>
+    
+    <!-- User Role Debug Info -->
+    <view class="debug-info" v-if="currentUser">
+       <view>当前用户: {{ currentUser.name || '未命名' }}</view>
+       <view>角色代码: {{ currentUser.role_code }}</view>
+       <view>是否管理员: {{ currentUser.is_admin ? '是' : '否' }}</view>
     </view>
+  </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { onShow } from '@dcloudio/uni-app';
+import { getCurrentUser, type UserInfo } from '@/utils/permission';
 
 const currentTab = ref(0);
+const currentUser = ref<UserInfo | null>(null);
+
+onShow(() => {
+  const user = getCurrentUser();
+  console.log('Current User on Show:', user);
+  currentUser.value = user;
+});
 
 const baseData = [
-  { label: '工地信息', iconChar: 'G' },
-  { label: '厂家信息', iconChar: 'C' },
-  { label: '厂家组', iconChar: 'C' },
-  { label: '产品信息', iconChar: 'C' },
-  { label: '其他费用项', iconChar: 'Q' },
+  { label: '工地信息', iconChar: 'G', roles: ['admin'] },
+  { label: '厂家信息', iconChar: 'C', roles: ['admin'] },
+  { label: '厂家组', iconChar: 'C', roles: ['admin'] },
+  { label: '产品信息', iconChar: 'C', roles: ['admin'] },
+  { label: '其他费用项', iconChar: 'Q', roles: ['admin'] },
 ];
 
 const businessData = [
-  { label: '合同信息', iconChar: 'H' },
-  { label: '工地订单', iconChar: 'G' },
-  { label: '采购单', iconChar: 'C' },
-  { label: '对账单', iconChar: 'D' },
-  { label: '库存信息', iconChar: 'K' },
-  { label: '出库单', iconChar: 'C' },
-  { label: '入库单', iconChar: 'R' },
+  { label: '合同信息', iconChar: 'H', roles: ['admin', 'site_agent'] },
+  { label: '工地订单', iconChar: 'G', roles: ['admin', 'site_agent'] },
+  { label: '采购单', iconChar: 'C', roles: ['admin', 'manufacturer'] },
+  { label: '对账单', iconChar: 'D', roles: ['admin', 'site_agent'] },
+  { label: '库存信息', iconChar: 'K', roles: ['admin', 'site_agent', 'manufacturer'] },
+  { label: '出库单', iconChar: 'C', roles: ['admin', 'manufacturer'] },
+  { label: '入库单', iconChar: 'R', roles: ['admin', 'site_agent'] },
+  { label: '发票管理', iconChar: 'F', roles: ['admin', 'site_agent'] },
 ];
 
-const currentGridData = computed(() => currentTab.value === 0 ? baseData : businessData);
+const hasRole = (roles: string[]) => {
+  if (!currentUser.value) return false;
+  
+  // If user is Admin, they see EVERYTHING.
+  if (currentUser.value.is_admin) return true;
+  
+  const hasSite = currentUser.value.site_permissions && currentUser.value.site_permissions.length > 0;
+  const hasMfr = currentUser.value.manufacturer_permissions && currentUser.value.manufacturer_permissions.length > 0;
+  
+  // Checking specific role permissions
+  if (roles.includes('site_agent') && hasSite) return true;
+  if (roles.includes('manufacturer') && hasMfr) return true;
+  
+  // Admin-only items are hidden for non-admins
+  return false;
+};
 
-const handleGridClick = (item: { label: string, iconChar: string }) => {
+const currentGridData = computed(() => {
+  const data = currentTab.value === 0 ? baseData : businessData;
+  return data.filter(item => hasRole(item.roles));
+});
+
+const handleGridClick = (item: any) => {
   if (item.label === '工地信息') {
     uni.navigateTo({ url: '/pages/site/list' });
   } else if (item.label === '厂家信息') {
@@ -100,6 +137,8 @@ const handleGridClick = (item: { label: string, iconChar: string }) => {
     uni.navigateTo({ url: '/pages/statement/list' });
   } else if (item.label === '其他费用项') {
     uni.navigateTo({ url: '/pages/expense-item/list' });
+  } else if (item.label === '发票管理') {
+    uni.navigateTo({ url: '/pages/invoice/list' });
   } else {
     uni.showToast({ title: '功能开发中...', icon: 'none' });
   }

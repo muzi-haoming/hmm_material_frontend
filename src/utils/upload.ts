@@ -15,8 +15,9 @@ export const uploadAvatar = async (filePath: string, userId: string): Promise<st
     try {
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
-        const fileName = `avatar_${userId}_${Date.now()}.png`;
-        const bucketName = 'avatars';
+        // Database RLS requires filename to be [userId].[ext]
+        const fileName = `${userId}.png`;
+        const bucketName = 'avatar';
 
         const uploadRes = await new Promise<any>((resolve, reject) => {
             uni.uploadFile({
@@ -33,8 +34,8 @@ export const uploadAvatar = async (filePath: string, userId: string): Promise<st
         });
 
         if (uploadRes.statusCode >= 200 && uploadRes.statusCode < 300) {
-            // 构造 Public URL
-            return `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fileName}`;
+            // 构造 Public URL with timestamp to bust cache
+            return `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fileName}?t=${Date.now()}`;
         } else {
             console.error('Avatar Upload Failed:', uploadRes);
             return null;

@@ -3,7 +3,7 @@
     <view class="form-card">
       <view class="form-item">
         <text class="label required">工地编号</text>
-        <input class="input" type="text" v-model="form.code" placeholder="请输入工地编号" />
+        <input class="input" type="text" v-model="form.code" disabled placeholder="自动生成" />
       </view>
 
       <view class="form-item">
@@ -24,7 +24,9 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
+import { generateCode } from '@/utils/codeGen';
 import { onLoad } from '@dcloudio/uni-app';
+import { getCurrentUser } from '@/utils/permission';
 
 
 const form = ref({
@@ -37,10 +39,19 @@ const loading = ref(false);
 const isEdit = ref(false);
 
 onLoad(async (options: any) => {
+  const user = getCurrentUser();
+  if (!user?.is_admin) {
+    uni.showToast({ title: '无权访问', icon: 'none' });
+    setTimeout(() => uni.navigateBack(), 1500);
+    return;
+  }
+
   if (options.id) {
     isEdit.value = true;
     form.value.id = options.id;
     await loadData(options.id);
+  } else {
+    form.value.code = await generateCode('site', 'GD');
   }
 });
 
@@ -90,10 +101,6 @@ const handleSave = async () => {
     uni.showToast({ title: '请输入工地名称', icon: 'none' });
     return;
   }
-  if (!form.value.code) {
-    uni.showToast({ title: '请输入工地编号', icon: 'none' });
-    return;
-  }
 
   loading.value = true;
   
@@ -105,8 +112,8 @@ const handleSave = async () => {
       .from('site')
       .update({
         name: form.value.name,
-        code: form.value.code,
-        update_time: new Date().toISOString()
+        code: form.value.code
+        // modify_time handled by trigger
       })
       .eq('id', form.value.id);
     error = updateError;

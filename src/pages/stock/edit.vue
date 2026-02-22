@@ -11,10 +11,10 @@
       </view>
 
       <view class="form-item">
-        <text class="label required">产品</text>
-        <picker @change="bindProductChange" :value="productIndex" :range="products" range-key="name">
+        <text class="label required">物料</text>
+        <picker @change="bindMaterialChange" :value="materialIndex" :range="materials" range-key="name">
           <view class="input picker-view">
-            {{ products[productIndex] ? products[productIndex].name : '请选择产品' }}
+            {{ materials[materialIndex] ? materials[materialIndex].name : '请选择物料' }}
           </view>
         </picker>
       </view>
@@ -48,13 +48,13 @@ interface Option {
 
 const form = ref({
   id: '',
-  product_id: '',
+  material_id: '',
   manufacturer_id: '',
   quantity: ''
 });
 
-const products = ref<Option[]>([]);
-const productIndex = ref(-1);
+const materials = ref<Option[]>([]);
+const materialIndex = ref(-1);
 
 const manufacturers = ref<Option[]>([]);
 const manufacturerIndex = ref(-1);
@@ -73,8 +73,8 @@ onLoad(async (options: any) => {
 });
 
 const fetchOptions = async () => {
-  const { data: productData } = await supabase.from('product').select('id, name');
-  if (productData) products.value = productData;
+  const { data: materialData } = await supabase.from('material').select('id, name');
+  if (materialData) materials.value = materialData;
 
   const { data: mData } = await supabase.from('manufacturer').select('id, name');
   if (mData) manufacturers.value = mData;
@@ -91,19 +91,19 @@ const loadData = async (id: string) => {
   uni.hideLoading();
   
   if (data) {
-    form.value.product_id = data.product_id;
+    form.value.material_id = data.material_id;
     form.value.manufacturer_id = data.manufacturer_id;
     form.value.quantity = data.quantity;
 
     // 设置索引
-    productIndex.value = products.value.findIndex(p => p.id === data.product_id);
+    materialIndex.value = materials.value.findIndex(p => p.id === data.material_id);
     manufacturerIndex.value = manufacturers.value.findIndex(m => m.id === data.manufacturer_id);
   }
 };
 
-const bindProductChange = (e: any) => {
-  productIndex.value = e.detail.value;
-  form.value.product_id = products.value[productIndex.value].id;
+const bindMaterialChange = (e: any) => {
+  materialIndex.value = e.detail.value;
+  form.value.material_id = materials.value[materialIndex.value].id;
 };
 
 const bindManufacturerChange = (e: any) => {
@@ -135,7 +135,7 @@ const handleDelete = async () => {
 };
 
 const handleSave = async () => {
-  if (!form.value.product_id) return uni.showToast({ title: '请选择产品', icon: 'none' });
+  if (!form.value.material_id) return uni.showToast({ title: '请选择物料', icon: 'none' });
   if (!form.value.manufacturer_id) return uni.showToast({ title: '请选择厂家', icon: 'none' });
   if (!form.value.quantity) return uni.showToast({ title: '请输入数量', icon: 'none' });
 
@@ -143,7 +143,7 @@ const handleSave = async () => {
   
   let error;
   const payload = {
-    product_id: form.value.product_id,
+    material_id: form.value.material_id,
     manufacturer_id: form.value.manufacturer_id,
     quantity: Number(form.value.quantity)
   };
@@ -156,7 +156,7 @@ const handleSave = async () => {
     const { data: existing } = await supabase
       .from('stock')
       .select('id')
-      .eq('product_id', form.value.product_id)
+      .eq('material_id', form.value.material_id)
       .eq('manufacturer_id', form.value.manufacturer_id)
       .single();
       

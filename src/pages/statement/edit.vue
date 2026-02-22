@@ -1,17 +1,22 @@
 <template>
   <view class="container">
     <view class="form-card">
-      <view class="section-title">基本信息</view>
       <view class="form-item">
         <text class="label required">对账单号</text>
-        <input class="input" type="text" v-model="form.code" placeholder="请输入单号" />
+        <input class="input" type="text" v-model="form.code" disabled placeholder="自动生成" />
       </view>
-
+      
       <view class="form-item">
-        <text class="label required">关联合同</text>
-        <picker @change="bindContractChange" :value="contractIndex" :range="contracts" range-key="name">
-          <view class="input picker-view">
-            {{ contracts[contractIndex] ? contracts[contractIndex].name : '请选择合同' }}
+        <text class="label required">选择合同</text>
+        <picker 
+          mode="selector" 
+          :range="contracts" 
+          range-key="name" 
+          @change="onContractChange"
+          :disabled="isEdit"
+        >
+          <view class="input picker-view" :class="{ disabled: isEdit }">
+            {{ getContractName() || '请选择合同' }}
           </view>
         </picker>
       </view>
@@ -19,131 +24,34 @@
       <view class="form-item">
         <text class="label required">开始日期</text>
         <picker mode="date" :value="form.start_time" @change="bindStartDateChange">
-          <view class="input picker-view">{{ form.start_time || '请选择日期' }}</view>
+          <view class="input picker-view">
+            {{ form.start_time || '请选择开始日期' }}
+          </view>
         </picker>
       </view>
 
       <view class="form-item">
         <text class="label required">结束日期</text>
         <picker mode="date" :value="form.end_time" @change="bindEndDateChange">
-          <view class="input picker-view">{{ form.end_time || '请选择日期' }}</view>
+          <view class="input picker-view">
+            {{ form.end_time || '请选择结束日期' }}
+          </view>
         </picker>
       </view>
     </view>
 
-    <!-- Material Details -->
-    <view class="form-card">
-      <view class="section-header">
-        <view class="section-title">物资明细</view>
-        <view class="btn-add-mini" @click="openMaterialModal">+ 添加物资</view>
-      </view>
-      
-      <view class="detail-list">
-        <view class="detail-item" v-for="(item, index) in materials" :key="index">
-          <view class="detail-row">
-            <text class="detail-name">{{ getProductName(item.product_id) }}</text>
-            <text class="iconfont icon-close" @click="removeMaterial(index)"></text>
-          </view>
-          <view class="detail-row sub">
-            <text>数量: {{ item.quantity }}</text>
-            <text>金额: ¥{{ item.amount }}</text>
-          </view>
-        </view>
-        <view v-if="materials.length === 0" class="empty-text">暂无物资明细</view>
-      </view>
+    <view class="footer-btn">
+      <button class="btn-primary" @click="submit" :loading="submitting">下一步</button>
     </view>
-
-    <!-- Expense Details -->
-    <view class="form-card">
-      <view class="section-header">
-        <view class="section-title">其他费用</view>
-        <view class="btn-add-mini" @click="openExpenseModal">+ 添加费用</view>
-      </view>
-      
-      <view class="detail-list">
-        <view class="detail-item" v-for="(item, index) in expenses" :key="index">
-          <view class="detail-row">
-             <text class="detail-name">{{ getExpenseName(item.item_id) }}</text>
-             <text class="iconfont icon-close" @click="removeExpense(index)"></text>
-          </view>
-          <view class="detail-row sub">
-             <text>金额: ¥{{ item.amount }}</text>
-          </view>
-        </view>
-        <view v-if="expenses.length === 0" class="empty-text">暂无其他费用</view>
-      </view>
-    </view>
-
-    <view class="footer">
-      <button class="btn-delete" v-if="isEdit" @click="handleDelete" :disabled="loading">删除</button>
-      <button class="btn-save" @click="handleSave" :disabled="loading">
-        {{ loading ? '保存中...' : '保存' }}
-      </button>
-    </view>
-
-    <!-- Material Modal -->
-    <view class="modal-mask" v-if="showMaterialModal" @click="closeMaterialModal">
-      <view class="modal-content" @click.stop>
-        <view class="modal-title">添加物资</view>
-        <view class="form-item">
-          <text class="label">产品</text>
-          <picker @change="bindModalProductChange" :value="tempMaterial.productIndex" :range="products" range-key="name">
-            <view class="input picker-view">
-              {{ products[tempMaterial.productIndex] ? products[tempMaterial.productIndex].name : '请选择' }}
-            </view>
-          </picker>
-        </view>
-        <view class="form-item">
-          <text class="label">数量</text>
-          <input class="input" type="number" v-model="tempMaterial.quantity" placeholder="输入数量" />
-        </view>
-        <view class="form-item">
-          <text class="label">金额</text>
-          <input class="input" type="number" v-model="tempMaterial.amount" placeholder="输入金额" />
-        </view>
-        <view class="modal-footer">
-          <button class="btn-cancel" @click="closeMaterialModal">取消</button>
-          <button class="btn-confirm" @click="confirmMaterial">确定</button>
-        </view>
-      </view>
-    </view>
-
-    <!-- Expense Modal -->
-    <view class="modal-mask" v-if="showExpenseModal" @click="closeExpenseModal">
-      <view class="modal-content" @click.stop>
-        <view class="modal-title">添加费用</view>
-        <view class="form-item">
-           <text class="label">费用项</text>
-           <picker @change="bindModalExpenseChange" :value="tempExpense.itemIndex" :range="expenseItems" range-key="name">
-             <view class="input picker-view">
-               {{ expenseItems[tempExpense.itemIndex] ? expenseItems[tempExpense.itemIndex].name : '请选择' }}
-             </view>
-           </picker>
-        </view>
-        <view class="form-item">
-          <text class="label">金额</text>
-          <input class="input" type="number" v-model="tempExpense.amount" placeholder="输入金额" />
-        </view>
-        <view class="modal-footer">
-          <button class="btn-cancel" @click="closeExpenseModal">取消</button>
-          <button class="btn-confirm" @click="confirmExpense">确定</button>
-        </view>
-      </view>
-    </view>
-
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { supabase } from '@/utils/supabase';
+import { generateCode } from '@/utils/codeGen';
 import { onLoad } from '@dcloudio/uni-app';
-
-
-interface Option {
-  id: string;
-  name: string;
-}
+import { getCurrentUser, type UserInfo } from '@/utils/permission';
 
 const form = ref({
   id: '',
@@ -153,85 +61,74 @@ const form = ref({
   end_time: ''
 });
 
-const contracts = ref<Option[]>([]);
-const contractIndex = ref(-1);
-
-const products = ref<Option[]>([]);
-const expenseItems = ref<Option[]>([]);
-
-// 本地详细信息状态
-const materials = ref<any[]>([]);
-const expenses = ref<any[]>([]);
-
-const loading = ref(false);
+const contracts = ref<any[]>([]);
 const isEdit = ref(false);
+const submitting = ref(false);
+const currentUser = ref<UserInfo | null>(null);
 
-// 模态框状态
-const showMaterialModal = ref(false);
-const tempMaterial = ref({ productIndex: -1, quantity: '', amount: '' });
-
-const showExpenseModal = ref(false);
-const tempExpense = ref({ itemIndex: -1, amount: '' });
+const selectedContract = computed(() => contracts.value.find(c => c.id === form.value.contract_id));
+const getContractName = () => selectedContract.value?.name;
 
 onLoad(async (options: any) => {
-  await fetchOptions();
-  
-  if (options.id) {
-    isEdit.value = true;
-    form.value.id = options.id;
-    await loadData(options.id);
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    currentUser.value = await getCurrentUser();
+    await fetchContracts();
+    
+    if (options.id) {
+      isEdit.value = true;
+      form.value.id = options.id;
+      await loadData(options.id);
+    } else {
+      await initCode();
+      // Default dates
+      const now = new Date();
+      form.value.end_time = now.toISOString().split('T')[0];
+      const lastMonth = new Date();
+      lastMonth.setMonth(now.getMonth() - 1);
+      form.value.start_time = lastMonth.toISOString().split('T')[0];
+    }
+  } finally {
+    uni.hideLoading();
   }
 });
 
-const fetchOptions = async () => {
-  const { data: cData } = await supabase.from('contract').select('id, name');
-  if (cData) contracts.value = cData;
+const initCode = async () => {
+  form.value.code = await generateCode('statement', 'JSD');
+};
 
-  const { data: pData } = await supabase.from('product').select('id, name');
-  if (pData) products.value = pData;
-
-  const { data: eData } = await supabase.from('statement_other_expenses_item').select('id, name');
-  if (eData) expenseItems.value = eData;
+const fetchContracts = async () => {
+  const { data } = await supabase
+    .from('contract')
+    .select('id, name, site_id')
+    .eq('is_confirmed', true)
+    .eq('is_completed', false)
+    .order('create_time', { ascending: false });
+    
+  if (data) {
+     if (currentUser.value?.is_admin) {
+         contracts.value = data;
+     } else {
+         const allowedSites = currentUser.value?.site_permissions || [];
+         contracts.value = data.filter(c => allowedSites.includes(c.site_id));
+     }
+  }
 };
 
 const loadData = async (id: string) => {
-  uni.showLoading({ title: '加载中' });
-  
-  // 1. 获取主表信息
-  const { data: master } = await supabase
-    .from('statement')
-    .select('*')
-    .eq('id', id)
-    .single();
-    
-  if (master) {
-    form.value.code = master.code;
-    form.value.contract_id = master.contract_id;
-    form.value.start_time = master.start_time ? master.start_time.split('T')[0] : '';
-    form.value.end_time = master.end_time ? master.end_time.split('T')[0] : '';
-    contractIndex.value = contracts.value.findIndex(c => c.id === master.contract_id);
+  const { data } = await supabase.from('statement').select('*').eq('id', id).single();
+  if (data) {
+    form.value = {
+        ...data,
+        start_time: data.start_time.split('T')[0],
+        end_time: data.end_time.split('T')[0]
+    };
   }
-
-  // 2. 获取物资明细
-  const { data: mats } = await supabase
-    .from('statement_material_detail')
-    .select('*')
-    .eq('statement_id', id);
-  if (mats) materials.value = mats;
-
-  // 3. 获取其他费用
-  const { data: exps } = await supabase
-    .from('statement_other_expenses_detail')
-    .select('*')
-    .eq('statement_id', id);
-  if (exps) expenses.value = exps;
-
-  uni.hideLoading();
 };
 
-const bindContractChange = (e: any) => {
-  contractIndex.value = e.detail.value;
-  form.value.contract_id = contracts.value[contractIndex.value].id;
+const onContractChange = (e: any) => {
+  const index = e.detail.value;
+  form.value.contract_id = contracts.value[index].id;
 };
 
 const bindStartDateChange = (e: any) => {
@@ -242,354 +139,69 @@ const bindEndDateChange = (e: any) => {
   form.value.end_time = e.detail.value;
 };
 
-// 物资模态框
-const openMaterialModal = () => {
-  tempMaterial.value = { productIndex: -1, quantity: '', amount: '' };
-  showMaterialModal.value = true;
-};
-const closeMaterialModal = () => { showMaterialModal.value = false; };
-const bindModalProductChange = (e: any) => { tempMaterial.value.productIndex = e.detail.value; };
-const confirmMaterial = () => {
-  if (tempMaterial.value.productIndex === -1) return uni.showToast({ title: '请选择产品', icon: 'none' });
-  if (!tempMaterial.value.quantity) return uni.showToast({ title: '请输入数量', icon: 'none' });
-  
-  materials.value.push({
-    product_id: products.value[tempMaterial.value.productIndex].id,
-    quantity: Number(tempMaterial.value.quantity),
-    amount: Number(tempMaterial.value.amount || 0)
-  });
-  closeMaterialModal();
-};
-
-// 费用模态框
-const openExpenseModal = () => {
-  tempExpense.value = { itemIndex: -1, amount: '' };
-  showExpenseModal.value = true;
-};
-const closeExpenseModal = () => { showExpenseModal.value = false; };
-const bindModalExpenseChange = (e: any) => { tempExpense.value.itemIndex = e.detail.value; };
-const confirmExpense = () => {
-   if (tempExpense.value.itemIndex === -1) return uni.showToast({ title: '请选择费用项', icon: 'none' });
-   
-   expenses.value.push({
-     item_id: expenseItems.value[tempExpense.value.itemIndex].id,
-     amount: Number(tempExpense.value.amount || 0)
-   });
-   closeExpenseModal();
-};
-
-const removeMaterial = (index: number) => { materials.value.splice(index, 1); };
-const removeExpense = (index: number) => { expenses.value.splice(index, 1); };
-
-const getProductName = (id: string) => {
-  const p = products.value.find(x => x.id === id);
-  return p ? p.name : id;
-};
-
-const getExpenseName = (id: string) => {
-  const e = expenseItems.value.find(x => x.id === id);
-  return e ? e.name : id;
-};
-
-const handleDelete = async () => {
-  uni.showModal({
-    title: '提示',
-    content: '删除对账单将删除所有明细，确定吗？',
-    success: async (res) => {
-      if (res.confirm) {
-        loading.value = true;
-        // 先删除明细
-        await supabase.from('statement_material_detail').delete().eq('statement_id', form.value.id);
-        await supabase.from('statement_other_expenses_detail').delete().eq('statement_id', form.value.id);
-        const { error } = await supabase.from('statement').delete().eq('id', form.value.id);
-        loading.value = false;
-        
-        if (error) {
-          uni.showToast({ title: '删除失败: ' + error.message, icon: 'none' });
-        } else {
-          uni.showToast({ title: '已删除', icon: 'success' });
-          setTimeout(() => { uni.navigateBack(); }, 1500);
-        }
-      }
-    }
-  });
-};
-
-const handleSave = async () => {
-  if (!form.value.code) return uni.showToast({ title: '请输入单号', icon: 'none' });
+const submit = async () => {
   if (!form.value.contract_id) return uni.showToast({ title: '请选择合同', icon: 'none' });
   if (!form.value.start_time) return uni.showToast({ title: '请选择开始日期', icon: 'none' });
   if (!form.value.end_time) return uni.showToast({ title: '请选择结束日期', icon: 'none' });
-
-  loading.value = true;
   
-  // 1. 更新或插入主表
-  const masterPayload = {
+  submitting.value = true;
+  
+  const payload = {
     code: form.value.code,
     contract_id: form.value.contract_id,
     start_time: form.value.start_time,
-    end_time: form.value.end_time,
-    update_time: new Date().toISOString()
+    end_time: form.value.end_time
   };
   
-  let statementId = form.value.id;
+  let targetId = form.value.id;
+  let error;
   
   if (isEdit.value) {
-    const { error } = await supabase.from('statement').update(masterPayload).eq('id', statementId);
-    if (error) { loading.value = false; return uni.showToast({ title: '保存主表失败' + error.message, icon: 'none' }); }
+     const { error: updateError } = await supabase.from('statement').update({
+         start_time: form.value.start_time,
+         end_time: form.value.end_time
+     }).eq('id', targetId);
+     error = updateError;
   } else {
-    const { data: newStatement, error } = await supabase
-      .from('statement')
-      .insert(masterPayload)
-      .select()
-      .single();
-      
-    if (newStatement) {
-      statementId = newStatement.id;
-    }
-    
-    if (error) { loading.value = false; return uni.showToast({ title: '保存主表失败' + error.message, icon: 'none' }); }
+     const { data, error: insertError } = await supabase.from('statement').insert(payload).select().single();
+     if (data) targetId = data.id;
+     error = insertError;
   }
-
-  // 2. 刷新明细（删除旧的 -> 插入新的）
-  if (isEdit.value) {
-    await supabase.from('statement_material_detail').delete().eq('statement_id', statementId);
-    await supabase.from('statement_other_expenses_detail').delete().eq('statement_id', statementId);
+  
+  submitting.value = false;
+  
+  if (error) {
+    uni.showToast({ title: '保存失败: ' + error.message, icon: 'none' });
+  } else {
+    uni.showToast({ title: '保存成功', icon: 'success' });
+    setTimeout(() => {
+        // Redirect to detail page
+        uni.redirectTo({ url: `/pages/statement/detail?id=${targetId}` });
+    }, 1500);
   }
-
-  // 3. 插入物资明细
-  if (materials.value.length > 0 && statementId) {
-    const matInserts = materials.value.map(m => ({
-      statement_id: statementId,
-      product_id: m.product_id,
-      quantity: m.quantity,
-      amount: m.amount
-    }));
-    await supabase.from('statement_material_detail').insert(matInserts);
-  }
-
-  // 4. 插入其他费用
-  if (expenses.value.length > 0 && statementId) {
-    const expInserts = expenses.value.map(e => ({
-      statement_id: statementId,
-      item_id: e.item_id,
-      amount: e.amount
-    }));
-    await supabase.from('statement_other_expenses_detail').insert(expInserts);
-  }
-
-  loading.value = false;
-  uni.showToast({ title: '保存成功', icon: 'success' });
-  setTimeout(() => { uni.navigateBack(); }, 1500);
 };
 </script>
 
 <style lang="scss">
 .container {
+  padding: 15px;
+  background-color: #f5f5f5;
   min-height: 100vh;
-  background-color: #f5f5f5;
-  padding: 15px;
-  padding-bottom: 80px;
 }
-
 .form-card {
-  background-color: #fff;
+  background: #fff;
   border-radius: 10px;
   padding: 15px;
-  margin-bottom: 15px;
 }
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.section-title {
-  font-size: 16px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 5px;
-}
-
-.btn-add-mini {
-  font-size: 12px;
-  color: #6739b6;
-  border: 1px solid #6739b6;
-  padding: 2px 8px;
-  border-radius: 12px;
-  
-  &:active {
-    background-color: #f3e5f5;
-  }
-}
-
 .form-item {
-  margin-bottom: 15px;
-  
-  &:last-child {
-    margin-bottom: 0;
-  }
-  
-  .label {
-    display: block;
-    font-size: 14px;
-    color: #333;
-    margin-bottom: 8px;
-    
-    &.required::after {
-      content: '*';
-      color: #ff4d4f;
-      margin-left: 4px;
-    }
-  }
-  
-  .input {
-    width: 100%;
-    height: 40px;
-    background-color: #f9f9f9;
-    border-radius: 6px;
-    padding: 0 12px;
-    font-size: 14px;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center; 
-  }
-  .picker-view {
-    color: #333; 
-  }
-}
-
-.detail-list {
-  background-color: #f9f9f9;
-  border-radius: 6px;
-  padding: 10px;
-}
-
-.detail-item {
-  background-color: #fff;
-  padding: 10px;
-  border-radius: 4px;
-  margin-bottom: 8px;
-  
-  &:last-child {
-    margin-bottom: 0;
-  }
-}
-
-.detail-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-  
-  &.sub {
-    font-size: 12px;
-    color: #666;
-  }
-}
-
-.detail-name {
-  font-weight: bold;
-  color: #333;
-}
-
-.icon-close {
-  color: #999;
-  font-size: 16px;
-  padding: 0 5px;
-}
-
-.empty-text {
-  text-align: center;
-  color: #999;
-  font-size: 12px;
-  padding: 10px 0;
-}
-
-.footer {
-  margin-top: 30px;
-  display: flex;
-  gap: 15px;
-}
-
-.btn-delete {
-  flex: 1;
-  background-color: #f5f5f5;
-  color: #ff4d4f;
-  border-radius: 25px;
-  height: 46px;
-  line-height: 46px;
-  font-size: 16px;
-  
-  &:active {
-    background-color: #eee;
-  }
-}
-
-.btn-save {
-  flex: 2;
-  background-color: #6739b6;
-  color: #fff;
-  border-radius: 25px;
-  height: 46px;
-  line-height: 46px;
-  font-size: 16px;
-  
-  &:active {
-    opacity: 0.9;
-  }
-}
-
-/* Modal Styles */
-.modal-mask {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0,0,0,0.5);
-  z-index: 999;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.modal-content {
-  background-color: #fff;
-  width: 80%;
-  border-radius: 10px;
-  padding: 20px;
-}
-
-.modal-title {
-  font-size: 18px;
-  font-weight: bold;
-  text-align: center;
   margin-bottom: 20px;
+  .label { display: block; margin-bottom: 8px; font-size: 14px; color: #666; }
+  .required::after { content: '*'; color: red; margin-left: 2px; }
+  .input { background: #f9f9f9; height: 44px; line-height: 44px; padding: 0 10px; border-radius: 6px; font-size: 15px; }
+  .picker-view { color: #333; &.disabled { color: #999; } }
 }
-
-.modal-footer {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 20px;
-  gap: 15px;
-  
-  button {
-    flex: 1;
-    font-size: 14px;
-    height: 40px;
-    line-height: 40px;
-  }
-  
-  .btn-cancel {
-    background-color: #f5f5f5;
-    color: #666;
-  }
-  
-  .btn-confirm {
-    background-color: #6739b6;
-    color: #fff;
-  }
+.footer-btn {
+  margin-top: 30px;
+  .btn-primary { background: #6739b6; color: #fff; border-radius: 25px; }
 }
 </style>

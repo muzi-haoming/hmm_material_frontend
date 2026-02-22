@@ -3,83 +3,94 @@
     <view class="form-card">
       <view class="form-item">
         <text class="label required">合同编号</text>
-        <input class="input" type="text" v-model="form.code" placeholder="请输入合同编号" />
+        <input class="input" type="text" v-model="form.code" placeholder="请输入合同编号" :disabled="!canEditBasicInfo" />
       </view>
 
       <view class="form-item">
         <text class="label required">合同名称</text>
-        <input class="input" type="text" v-model="form.name" placeholder="请输入合同名称" />
+        <input class="input" type="text" v-model="form.name" placeholder="请输入合同名称" :disabled="!canEditBasicInfo" />
       </view>
 
       <view class="form-item">
         <text class="label required">关联工地</text>
-        <picker @change="bindSiteChange" :value="siteIndex" :range="sites" range-key="name">
-          <view class="input picker-view">
+        <picker @change="bindSiteChange" :value="siteIndex" :range="sites" range-key="name" :disabled="!canEditBasicInfo">
+          <view class="input picker-view" :class="{ disabled: !canEditBasicInfo }">
             {{ sites[siteIndex] ? sites[siteIndex].name : '请选择工地' }}
           </view>
         </picker>
       </view>
 
       <view class="form-item">
-        <text class="label required">关联厂家组</text>
-        <picker @change="bindGroupChange" :value="groupIndex" :range="groups" range-key="name">
-          <view class="input picker-view">
-            {{ groups[groupIndex] ? groups[groupIndex].name : '请选择厂家组' }}
+        <text class="label required">关联厂家</text>
+        <view class="manufacturer-list">
+          <view v-if="selectedManufacturers.length === 0" class="empty-hint">
+            未选择厂家
           </view>
-        </picker>
+          <view v-for="(mfr, index) in selectedManufacturers" :key="mfr.id" class="manufacturer-item">
+            <text class="manufacturer-name">{{ mfr.name }}</text>
+            <view v-if="isAdmin && canEditBasicInfo" class="remove-btn" @click="removeManufacturer(index)">
+              <text>×</text>
+            </view>
+          </view>
+        </view>
+        <button v-if="isAdmin && canEditBasicInfo" class="btn-add-manufacturer" @click="showManufacturerPicker">
+          + 添加厂家
+        </button>
       </view>
 
       <view class="form-item">
         <text class="label required">代理人</text>
-        <picker v-if="isAdmin" @change="bindAgentChange" :value="agentIndex" :range="agents" range-key="name">
+        <picker v-if="isAdmin && canEditBasicInfo" @change="bindAgentChange" :value="agentIndex" :range="agents" range-key="nickname">
           <view class="input picker-view">
-            {{ agents[agentIndex] ? agents[agentIndex].name : '请选择代理人' }}
+            {{ agents[agentIndex] ? (agents[agentIndex].nickname || agents[agentIndex].full_name || '未设置昵称') : '请选择代理人' }}
           </view>
         </picker>
         <view v-else class="input disabled">
            {{ getAgentName(form.agent_id) }}
         </view>
       </view>
+
+      <view v-if="isEdit" class="form-item">
+        <text class="label">合同状态</text>
+        <view class="status-badge" :class="'status-' + billStatus">
+          {{ billStatusText }}
+        </view>
+      </view>
     </view>
 
     <view class="footer">
-      <!-- 新增模式 -->
-      <template v-if="!isEdit">
-        <button class="btn-save" @click="handleSave(false)" :disabled="loading">保存</button>
-        <button class="btn-primary" @click="handleSave(true)" :disabled="loading">保存并确认</button>
-      </template>
+      <button v-if="isEdit" class="btn-delete" @click="handleDelete" :disabled="loading">删除</button>
+      <button class="btn-primary" @click="handleSave" :disabled="loading">保存</button>
+    </view>
 
-      <!-- 编辑模式 -->
-      <template v-else>
-        <!-- 未确认 + 未封存 -->
-        <template v-if="!form.is_confirmed && !form.is_archived">
-          <button class="btn-delete" @click="handleDelete" :disabled="loading">删除</button>
-          <button class="btn-save" @click="handleSave(false)" :disabled="loading">保存</button>
-          <button class="btn-primary" @click="handleConfirm" :disabled="loading">确认</button>
-        </template>
-
-        <!-- 已确认 + 未封存 -->
-        <template v-if="form.is_confirmed && !form.is_archived">
-          <button class="btn-warning" @click="handleCancelConfirm" :disabled="loading">取消确认</button>
-          <button v-if="isAdmin" class="btn-danger" @click="handleArchive" :disabled="loading">封存</button>
-        </template>
-
-        <!-- 已确认 + 已封存 -->
-        <template v-if="form.is_confirmed && form.is_archived">
-          <button v-if="isAdmin" class="btn-primary" @click="handleReactivate" :disabled="loading">重新启用</button>
-        </template>
-      </template>
+    <!-- 厂家选择弹窗 -->
+    <view v-if="showMfrPicker" class="modal-overlay" @click="closeMfrPicker">
+      <view class="modal-content" @click.stop>
+        <view class="modal-header">
+          <text class="modal-title">选择厂家</text>
+          <view class="modal-close" @click="closeMfrPicker">
+            <text>×</text>
+          </view>
+        </view>
+        <scroll-view class="modal-body" scroll-y>
+          <view v-for="mfr in availableManufacturers" :key="mfr.id" class="mfr-option" @click="addManufacturer(mfr)">
+            <text>{{ mfr.name }}</text>
+          </view>
+        </scroll-view>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onLoad } from '@dcloudio/uni-app';
+import type { PickerOption } from '@/types';
+import { BillStatus, getBillStatus, BillStatusText } from '@/types';
+import { getCurrentUser, type UserInfo } from '@/utils/permission';
 
-
-interface Option {
+interface Manufacturer {
   id: string;
   name: string;
 }
@@ -89,29 +100,43 @@ const form = ref({
   name: '',
   code: '',
   site_id: '',
-  manufacturer_group_id: '',
+  agent_id: '',
   is_confirmed: false,
-  is_archived: false,
-  agent_id: '' // 稍后设置为当前用户
+  is_completed: false
 });
 
-const sites = ref<Option[]>([]);
+const sites = ref<PickerOption[]>([]);
 const siteIndex = ref(-1);
 
-const groups = ref<Option[]>([]);
-const groupIndex = ref(-1);
+const manufacturers = ref<Manufacturer[]>([]);
+const selectedManufacturers = ref<Manufacturer[]>([]);
+const showMfrPicker = ref(false);
 
-const agents = ref<Option[]>([]);
+const agents = ref<PickerOption[]>([]);
 const agentIndex = ref(-1);
 const isAdmin = ref(false);
 const currentUserId = ref('');
+const currentUser = ref<UserInfo | null>(null);
 
 const loading = ref(false);
 const isEdit = ref(false);
 
+// 计算当前单据状态
+const billStatus = computed(() => getBillStatus(form.value.is_confirmed, form.value.is_completed));
+const billStatusText = computed(() => BillStatusText[billStatus.value]);
+
+// 是否可以编辑基本信息 (仅未确认状态可编辑)
+const canEditBasicInfo = computed(() => billStatus.value === BillStatus.UNCONFIRMED);
+
+// 可选择的厂家列表 (排除已选择的)
+const availableManufacturers = computed(() => {
+  const selectedIds = new Set(selectedManufacturers.value.map(m => m.id));
+  return manufacturers.value.filter(m => !selectedIds.has(m.id));
+});
+
 onLoad(async (options: any) => {
+  await fetchCurrentUser(); // 先获取用户权限
   await fetchOptions();
-  await fetchCurrentUser();
 
   if (options.id) {
     isEdit.value = true;
@@ -122,16 +147,32 @@ onLoad(async (options: any) => {
 
 const fetchOptions = async () => {
   // 获取工地
-  const { data: siteData } = await supabase.from('site').select('id, name');
+  // 根据权限过滤工地
+  let siteQuery = supabase.from('site').select('id, name');
+  if (!isAdmin.value && currentUser.value?.site_permissions) {
+      // 只能选择有权限的工地
+      // Supabase .in() filters
+      if (currentUser.value.site_permissions.length > 0) {
+        siteQuery = siteQuery.in('id', currentUser.value.site_permissions);
+      } else {
+        // 无任何工地权限
+        sites.value = [];
+        return; 
+      }
+  }
+  const { data: siteData } = await siteQuery;
   if (siteData) sites.value = siteData;
 
-  // 获取厂家组
-  const { data: groupData } = await supabase.from('manufacturer_group').select('id, name');
-  if (groupData) groups.value = groupData;
+  // 获取厂家
+  const { data: mfrData } = await supabase.from('manufacturer').select('id, name');
+  if (mfrData) manufacturers.value = mfrData;
   
-  // 获取所有用户作为潜在经办人
-  const { data: agentData } = await supabase.from('profile').select('id, name');
-  if (agentData) agents.value = agentData;
+  // 获取所有用户作为潜在代理人
+  // 只有管理员需要获取所有代理人列表
+  if (isAdmin.value) {
+    const { data: agentData } = await supabase.from('profile').select('id, nickname, full_name');
+    if (agentData) agents.value = agentData as any;
+  }
 };
 
 const loadData = async (id: string) => {
@@ -142,59 +183,57 @@ const loadData = async (id: string) => {
     .eq('id', id)
     .single();
     
-  uni.hideLoading();
-  
   if (data) {
     form.value.name = data.name;
     form.value.code = data.code;
     form.value.site_id = data.site_id;
-    form.value.manufacturer_group_id = data.manufacturer_group_id;
-    form.value.is_confirmed = data.is_confirmed;
-    form.value.is_archived = data.is_archived;
     form.value.agent_id = data.agent_id;
+    form.value.is_confirmed = data.is_confirmed;
+    form.value.is_completed = data.is_completed;
 
     // 设置索引
+    // 注意: 如果当前用户没权限看这个工地, siteIndex可能是-1, 显示会有问题
     siteIndex.value = sites.value.findIndex(s => s.id === data.site_id);
-    groupIndex.value = groups.value.findIndex(g => g.id === data.manufacturer_group_id);
     
-    // 如果是编辑模式，确保 agentIndex 正确
     if (agents.value.length > 0) {
       agentIndex.value = agents.value.findIndex(a => a.id === data.agent_id);
     }
+
+    // 加载关联的厂家
+    await loadManufacturers(id);
+  }
+  
+  uni.hideLoading();
+};
+
+const loadManufacturers = async (contractId: string) => {
+  const { data } = await supabase
+    .from('contract_manufacturer_rela')
+    .select('manufacturer_id')
+    .eq('contract_id', contractId);
+    
+  if (data) {
+    const mfrIds = data.map(d => d.manufacturer_id);
+    selectedManufacturers.value = manufacturers.value.filter(m => mfrIds.includes(m.id));
   }
 };
 
 const fetchCurrentUser = async () => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) {
-    const { data: profile } = await supabase
-      .from('profile')
-      .select('id, name, role:role_id(code)')
-      .eq('id', user.id)
-      .single();
-      
-    if (profile) {
-      currentUserId.value = profile.id;
-      // @ts-ignore
-      const roleCode = profile.role?.code;
-      isAdmin.value = roleCode === 'admin';
-      
-      // 如果不是管理员且是新增模式，或者虽然是编辑模式但没有经办人，默认设为自己
-      if (!isAdmin.value || !form.value.agent_id) {
-        form.value.agent_id = profile.id;
-      }
+    const user = await getCurrentUser();
+    if(user){
+        currentUser.value = user;
+        currentUserId.value = user.id;
+        isAdmin.value = user.is_admin;
+        
+        if (!isEdit.value || !form.value.agent_id) {
+            form.value.agent_id = user.id;
+        }
     }
-  }
 };
 
 const bindSiteChange = (e: any) => {
   siteIndex.value = e.detail.value;
   form.value.site_id = sites.value[siteIndex.value].id;
-};
-
-const bindGroupChange = (e: any) => {
-  groupIndex.value = e.detail.value;
-  form.value.manufacturer_group_id = groups.value[groupIndex.value].id;
 };
 
 const bindAgentChange = (e: any) => {
@@ -205,7 +244,24 @@ const bindAgentChange = (e: any) => {
 const getAgentName = (id: string) => {
   if (!id) return '自动关联当前用户';
   const agent = agents.value.find(a => a.id === id);
-  return agent ? agent.name : '未知用户';
+  return agent ? (agent.nickname || agent.full_name || '未知用户') : '未知用户';
+};
+
+const showManufacturerPicker = () => {
+  showMfrPicker.value = true;
+};
+
+const closeMfrPicker = () => {
+  showMfrPicker.value = false;
+};
+
+const addManufacturer = (mfr: Manufacturer) => {
+  selectedManufacturers.value.push(mfr);
+  closeMfrPicker();
+};
+
+const removeManufacturer = (index: number) => {
+  selectedManufacturers.value.splice(index, 1);
 };
 
 const handleDelete = async () => {
@@ -215,6 +271,11 @@ const handleDelete = async () => {
     success: async (res) => {
       if (res.confirm) {
         loading.value = true;
+        
+        // 先删除关联的厂家关系
+        await supabase.from('contract_manufacturer_rela').delete().eq('contract_id', form.value.id);
+        
+        // 再删除合同
         const { error } = await supabase.from('contract').delete().eq('id', form.value.id);
         loading.value = false;
         
@@ -231,50 +292,70 @@ const handleDelete = async () => {
   });
 };
 
-const handleSave = async (autoConfirm = false) => {
+const handleSave = async () => {
   if (!form.value.name) return uni.showToast({ title: '请输入合同名称', icon: 'none' });
   if (!form.value.code) return uni.showToast({ title: '请输入合同编号', icon: 'none' });
   if (!form.value.site_id) return uni.showToast({ title: '请选择工地', icon: 'none' });
-  if (!form.value.manufacturer_group_id) return uni.showToast({ title: '请选择厂家组', icon: 'none' });
+  if (selectedManufacturers.value.length === 0) return uni.showToast({ title: '请至少选择一个厂家', icon: 'none' });
 
   loading.value = true;
   
   let error;
+  let contractId = form.value.id;
   
   const payload = {
     name: form.value.name,
     code: form.value.code,
     site_id: form.value.site_id,
-    manufacturer_group_id: form.value.manufacturer_group_id,
-    agent_id: form.value.agent_id,
-    // 保存时不修改确认/封存状态，除非是新增并确认
-    ...(isEdit.value ? { update_time: new Date().toISOString() } : {
-       is_confirmed: autoConfirm,
-       is_archived: false
-    })
+    agent_id: form.value.agent_id
   };
 
   if (isEdit.value) {
-    // 编辑模式下的保存，只更新基础字段，不更改状态 logic handled by separate buttons
+    // 编辑模式: 只有未确认状态才能修改基本信息
     const { error: updateError } = await supabase
       .from('contract')
       .update(payload)
       .eq('id', form.value.id)
-      // 乐观锁：确保当前状态未锁定，或者只允许修改基础信息。
-      // 这里假设编辑非状态字段不需要严格锁，只要记录存在。
-      // 但如果要求未确认才能修改基础信息:
-      .eq('is_confirmed', false); 
+      .eq('is_confirmed', false)
+      .eq('is_completed', false);
       
     error = updateError;
-    if (error && error.code === 'PGRST116') { // No rows updated usually means condition failed
-       error.message = '合同已确认或不存在，无法修改';
+    if (error && error.code === 'PGRST116') {
+      error.message = '合同已确认或已完成,无法修改基本信息';
     }
   } else {
-    // 插入
-    const { error: insertError } = await supabase
+    // 新增模式
+    const insertPayload = {
+      ...payload,
+      is_confirmed: false,
+      is_completed: false
+    };
+    
+    const { data, error: insertError } = await supabase
       .from('contract')
-      .insert(payload);
+      .insert(insertPayload)
+      .select()
+      .single();
+      
     error = insertError;
+    if (data) {
+      contractId = data.id;
+    }
+  }
+
+  // 保存厂家关系
+  if (!error && contractId) {
+    // 删除旧的关系
+    await supabase.from('contract_manufacturer_rela').delete().eq('contract_id', contractId);
+    
+    // 插入新的关系
+    const relations = selectedManufacturers.value.map(m => ({
+      contract_id: contractId,
+      manufacturer_id: m.id
+    }));
+    
+    const { error: relaError } = await supabase.from('contract_manufacturer_rela').insert(relations);
+    if (relaError) error = relaError;
   }
 
   loading.value = false;
@@ -288,78 +369,6 @@ const handleSave = async (autoConfirm = false) => {
       uni.navigateBack();
     }, 1500);
   }
-};
-
-const handleConfirm = async () => {
-   loading.value = true;
-   // 乐观锁：更新时确保当前通过 is_confirmed = false 判断
-   const { error } = await supabase
-     .from('contract')
-     .update({ is_confirmed: true, update_time: new Date().toISOString() })
-     .eq('id', form.value.id)
-     .eq('is_confirmed', false);
-
-   loading.value = false;
-   if (error) {
-      uni.showToast({ title: '确认失败: 可能是状态已变更', icon: 'none' });
-   } else {
-      form.value.is_confirmed = true;
-      uni.showToast({ title: '已确认', icon: 'success' });
-   }
-};
-
-const handleCancelConfirm = async () => {
-   loading.value = true;
-   // 乐观锁：更新时确保当前通过 is_confirmed = true 判断
-   const { error } = await supabase
-     .from('contract')
-     .update({ is_confirmed: false, update_time: new Date().toISOString() })
-     .eq('id', form.value.id)
-     .eq('is_confirmed', true)
-     .eq('is_archived', false); // 只有未封存的可以取消确认
-
-   loading.value = false;
-   if (error) {
-      uni.showToast({ title: '取消失败: 可能是状态已变更', icon: 'none' });
-   } else {
-      form.value.is_confirmed = false;
-      uni.showToast({ title: '已取消确认', icon: 'success' });
-   }
-};
-
-const handleArchive = async () => {
-   loading.value = true;
-   const { error } = await supabase
-     .from('contract')
-     .update({ is_archived: true, update_time: new Date().toISOString() })
-     .eq('id', form.value.id)
-     .eq('is_confirmed', true)
-     .eq('is_archived', false);
-
-   loading.value = false;
-   if (error) {
-      uni.showToast({ title: '封存失败', icon: 'none' });
-   } else {
-      form.value.is_archived = true;
-      uni.showToast({ title: '已封存', icon: 'success' });
-   }
-};
-
-const handleReactivate = async () => {
-   loading.value = true;
-   const { error } = await supabase
-     .from('contract')
-     .update({ is_archived: false, update_time: new Date().toISOString() })
-     .eq('id', form.value.id)
-     .eq('is_archived', true);
-
-   loading.value = false;
-   if (error) {
-      uni.showToast({ title: '启用失败', icon: 'none' });
-   } else {
-      form.value.is_archived = false;
-      uni.showToast({ title: '已重新启用', icon: 'success' });
-   }
 };
 </script>
 
@@ -405,16 +414,100 @@ const handleReactivate = async () => {
     font-size: 15px;
     box-sizing: border-box;
     display: flex;
-    align-items: center; // 用于 picker view 内部文字对齐
+    align-items: center;
+    
+    &.disabled {
+      color: #999;
+      background-color: #f0f0f0;
+    }
   }
   
   .picker-view {
-    color: #333; // 默认颜色
+    color: #333;
+  }
+}
+
+.manufacturer-list {
+  background-color: #f9f9f9;
+  border-radius: 6px;
+  padding: 10px;
+  min-height: 50px;
+}
+
+.empty-hint {
+  color: #999;
+  font-size: 14px;
+  text-align: center;
+  padding: 10px 0;
+}
+
+.manufacturer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: #fff;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.manufacturer-name {
+  font-size: 14px;
+  color: #333;
+}
+
+.remove-btn {
+  width: 24px;
+  height: 24px;
+  background-color: #ff4d4f;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.btn-add-manufacturer {
+  width: 100%;
+  height: 40px;
+  background-color: #fff;
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  color: #6739b6;
+  font-size: 14px;
+  margin-top: 10px;
+  
+  &:active {
+    opacity: 0.8;
+  }
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  
+  &.status-unconfirmed {
+    background-color: #fff7e6;
+    color: #fa8c16;
   }
   
-  .disabled {
-    color: #999;
-    background-color: #f5f5f5;
+  &.status-confirmed {
+    background-color: #e6f7ff;
+    color: #1890ff;
+  }
+  
+  &.status-completed {
+    background-color: #f6ffed;
+    color: #52c41a;
   }
 }
 
@@ -422,7 +515,7 @@ const handleReactivate = async () => {
   margin-top: 30px;
   display: flex;
   gap: 15px;
-  flex-wrap: wrap; /* Allow wrapping if too many buttons */
+  flex-wrap: wrap;
 }
 
 button {
@@ -461,7 +554,68 @@ button {
   background-color: #fa8c16;
 }
 
-.btn-danger {
-  background-color: #ff4d4f;
+// 弹窗样式
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  z-index: 999;
+}
+
+.modal-content {
+  background-color: #fff;
+  border-radius: 20px 20px 0 0;
+  max-height: 60vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+}
+
+.modal-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: #999;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 20px;
+}
+
+.mfr-option {
+  padding: 14px 16px;
+  background-color: #f9f9f9;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-size: 15px;
+  color: #333;
+  
+  &:active {
+    background-color: #f0f0f0;
+  }
 }
 </style>
