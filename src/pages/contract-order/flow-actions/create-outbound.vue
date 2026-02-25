@@ -148,7 +148,7 @@ const submit = async () => {
           
       submitting.value = false;
       if (error) {
-          uni.showToast({ title: '保存失败: ' + error.message, icon: 'none' });
+          uni.showToast({ title: '保存失败: ' + ((error as any).data?.message || error.message || '未知错误'), icon: 'none' });
       } else {
           uni.showToast({ title: '保存成功', icon: 'success' });
           setTimeout(() => { uni.navigateBack(); }, 1500);
@@ -168,7 +168,7 @@ const submit = async () => {
     
       if (error) {
         console.error('Create stock out error:', error);
-        uni.showToast({ title: '创建失败', icon: 'none' });
+        uni.showToast({ title: '创建失败: ' + ((error as any).data?.message || error.message || '未知错误'), icon: 'none' });
       } else {
         uni.showToast({ title: '创建成功', icon: 'success' });
         setTimeout(() => {

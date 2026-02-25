@@ -910,7 +910,30 @@ begin
 end;
 $$ language plpgsql security definer;
 -----------------------------------
+-- 统一库存超买限制校验
+create or replace function check_stock_quantity() returns trigger as $$
+declare
+    v_material_name varchar;
+    v_old_quantity decimal;
+begin
+    if new.quantity < 0 then
+        -- 获取物料名称用于友好提示
+        select name into v_material_name from material where id = new.material_id;
+        
+        if tg_op = 'UPDATE' then
+            v_old_quantity := old.quantity;
+        else
+            v_old_quantity := 0;
+        end if;
+        
+        raise exception '操作失败：物料 [%] 库存不足! (当前库存: %)', coalesce(v_material_name, '未知物料'), v_old_quantity;
+    end if;
+    return new;
+end;
+$$ language plpgsql set search_path = public;
+-----------------------------------
 -- 绑定触发器
+create trigger stock_check_quantity before insert or update on stock for each row execute function check_stock_quantity();
 create trigger stock_set_modifier before update on stock for each row execute function set_modifier();
 create trigger stock_set_modify_time before update on stock for each row execute function set_modify_time();
 -----------------------------------
