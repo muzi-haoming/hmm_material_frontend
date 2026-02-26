@@ -47,6 +47,11 @@
             <text class="menu-text">产品与物料关系</text>
             <text class="iconfont icon-right arrow"></text>
         </view>
+         <view class="menu-item" @click="navTo('/pages/expense-item/list')">
+            <text class="iconfont icon-transaction menu-icon"></text>
+            <text class="menu-text">费用项管理</text>
+            <text class="iconfont icon-right arrow"></text>
+        </view>
          <view class="menu-item" @click="navTo('/pages/profile/list')">
             <text class="iconfont icon-team menu-icon"></text>
             <text class="menu-text">用户管理</text>

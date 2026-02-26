@@ -164,7 +164,7 @@ const fetchData = async () => {
         // @ts-ignore
         spec: '', // Spec might not be in material table directly
         // @ts-ignore
-        unit: item.material?.unit || '个',
+        unit: item.material?.unit || '-',
         // @ts-ignore
         manufacturer_name: item.manufacturer?.name || '未知厂家',
         quantity: item.quantity

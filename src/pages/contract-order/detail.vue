@@ -64,6 +64,10 @@
                     <text class="detail-value">{{ item.code }}</text>
                   </view>
                   <view class="detail-row">
+                    <text class="detail-label">采购方：</text>
+                    <text class="detail-value">{{ item.payer_manufacturer?.name || '-' }}</text>
+                  </view>
+                  <view class="detail-row">
                     <text class="detail-label">供应商：</text>
                     <text class="detail-value">{{ item.payee_manufacturer?.name || '-' }}</text>
                   </view>
@@ -215,12 +219,16 @@ const fetchRelatedDocs = async () => {
   // Fetch Purchases
   const { data: purchaseData, error } = await supabase
         .from('contract_order_purchase')
-        .select('id, code, quantity, create_time, payee_manufacturer:payee_manufacturer_id(name)')
+        .select('id, code, quantity, create_time, payer_manufacturer:payer_manufacturer_id(name), payee_manufacturer:payee_manufacturer_id(name)')
         .eq('contract_order_id', orderId.value)
         .order('create_time', { ascending: false });
    
    if (!error && purchaseData) {
-       purchases.value = purchaseData;
+       purchases.value = purchaseData.map((item: any) => ({
+           ...item,
+           payer_manufacturer: Array.isArray(item.payer_manufacturer) ? item.payer_manufacturer[0] : item.payer_manufacturer,
+           payee_manufacturer: Array.isArray(item.payee_manufacturer) ? item.payee_manufacturer[0] : item.payee_manufacturer,
+       }));
    } else {
        purchases.value = [];
    }

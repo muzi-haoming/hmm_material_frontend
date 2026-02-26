@@ -32,6 +32,10 @@
             <text class="detail-value">{{ item.payee?.name || '-' }}</text>
           </view>
           <view class="detail-row">
+            <text class="detail-label">物料：</text>
+            <text class="detail-value">{{ item.material?.name || '-' }}</text>
+          </view>
+          <view class="detail-row">
             <text class="detail-label">数量：</text>
             <text class="detail-value">{{ item.quantity }}</text>
           </view>
@@ -66,6 +70,7 @@ interface Purchase {
   is_completed: boolean;
   payer?: { name: string };
   payee?: { name: string };
+  material?: { name: string };
 }
 
 const list = ref<Purchase[]>([]);
@@ -82,7 +87,7 @@ const fetchData = async () => {
   loading.value = true;
   let query = supabase
     .from('general_purchase')
-    .select('id, code, quantity, is_confirmed, is_completed, payer:payer_manufacturer_id(name), payee:payee_manufacturer_id(name)')
+    .select('id, code, quantity, is_confirmed, is_completed, payer:payer_manufacturer_id(name), payee:payee_manufacturer_id(name), material:material_id(name)')
     .order('create_time', { ascending: false });
 
   if (keyword.value) {
@@ -103,7 +108,8 @@ const fetchData = async () => {
         is_confirmed: item.is_confirmed,
         is_completed: item.is_completed,
         payer: Array.isArray(item.payer) ? item.payer[0] : item.payer,
-        payee: Array.isArray(item.payee) ? item.payee[0] : item.payee
+        payee: Array.isArray(item.payee) ? item.payee[0] : item.payee,
+        material: Array.isArray(item.material) ? item.material[0] : item.material
     }));
   }
   loading.value = false;

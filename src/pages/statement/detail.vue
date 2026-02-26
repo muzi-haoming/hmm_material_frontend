@@ -40,9 +40,6 @@
 
     <!-- Tab 1: Materials -->
     <view v-if="currentTab === 0" class="tab-content">
-      <view class="action-bar" v-if="!isConfirmed">
-        <button class="btn-mini" @click="openMaterialModal">+ 添加物资</button>
-      </view>
       <view class="list">
         <view class="list-item" v-for="(item, index) in materials" :key="item.id">
           <view class="item-main">
@@ -66,9 +63,6 @@
 
     <!-- Tab 2: Expenses -->
     <view v-if="currentTab === 1" class="tab-content">
-      <view class="action-bar" v-if="!isConfirmed">
-        <button class="btn-mini" @click="openExpenseModal">+ 添加费用</button>
-      </view>
        <view class="list">
         <view class="list-item" v-for="(item, index) in expenses" :key="item.id">
           <view class="item-main">
@@ -85,9 +79,6 @@
 
     <!-- Tab 3: Invoices -->
     <view v-if="currentTab === 2" class="tab-content">
-      <view class="action-bar" v-if="!isConfirmed">
-        <button class="btn-mini" @click="openLinkInvoice">+ 关联发票</button>
-      </view>
        <view class="list">
         <view class="list-item" v-for="(item, index) in invoices" :key="item.id">
           <view class="item-main">
@@ -138,6 +129,11 @@
           <button class="primary" @click="saveExpense">确定</button>
         </view>
       </view>
+    </view>
+
+    <!-- Floating Action Button -->
+    <view class="fab-add" v-if="!isConfirmed" @click="handleAddClick">
+      <text class="plus">+</text>
     </view>
 
   </view>
@@ -223,6 +219,17 @@ const formatDate = (str: string) => str ? str.split('T')[0] : '';
 
 const goEditHeader = () => {
     uni.navigateTo({ url: `/pages/statement/edit?id=${statementId.value}` });
+};
+
+// Main Add Button Click Handler
+const handleAddClick = () => {
+    if (currentTab.value === 0) {
+        openMaterialModal();
+    } else if (currentTab.value === 1) {
+        openExpenseModal();
+    } else if (currentTab.value === 2) {
+        openLinkInvoice();
+    }
 };
 
 // Material
@@ -322,8 +329,6 @@ const completeStatement = async () => {
 .tab-item { flex: 1; text-align: center; padding: 15px 0; font-size: 15px; color: #666; &.active { color: #6739b6; border-bottom: 2px solid #6739b6; } }
 
 .tab-content { padding: 15px; }
-.action-bar { margin-bottom: 10px; text-align: right; }
-.btn-mini { display: inline-block; font-size: 12px; background: #6739b6; color: #fff; border-radius: 12px; padding: 4px 12px; }
 
 .list-item { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
 .item-title { font-size: 15px; font-weight: 500; color: #333; }
@@ -361,4 +366,29 @@ const completeStatement = async () => {
 .modal-input { background: #f9f9f9; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 14px; }
 .modal-footer { display: flex; gap: 10px; button { flex: 1; font-size: 14px; &.primary { background: #6739b6; color: #fff; } } }
 .empty-state { text-align: center; color: #999; padding: 20px; }
+
+.fab-add {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: #6739b6;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 4px 10px rgba(103, 57, 182, 0.4);
+  
+  .plus {
+    color: #fff;
+    font-size: 30px;
+    font-weight: 300;
+    margin-top: -4px;
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+}
 </style>

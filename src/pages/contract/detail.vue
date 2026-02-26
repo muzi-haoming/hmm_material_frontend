@@ -44,7 +44,7 @@
           </view>
           <view class="order-body">
             <view class="detail-row">
-              <text class="detail-label">物料：</text>
+              <text class="detail-label">产品：</text>
               <text class="detail-value">{{ order.product?.name }}</text>
             </view>
             <view class="detail-row">

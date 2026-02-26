@@ -40,8 +40,11 @@
       </view>
     </view>
 
-    <view class="footer-btn">
-      <button class="btn-primary" @click="submit" :loading="submitting">下一步</button>
+    <view class="footer">
+      <button class="btn-delete" v-if="isEdit" @click="handleDelete" :disabled="submitting">删除</button>
+      <button class="btn-save" @click="submit" :disabled="submitting">
+        {{ submitting ? '保存中...' : '保存' }}
+      </button>
     </view>
   </view>
 </template>
@@ -180,6 +183,29 @@ const submit = async () => {
     }, 1500);
   }
 };
+
+const handleDelete = async () => {
+  uni.showModal({
+    title: '提示',
+    content: '确定要删除该对账单吗？',
+    success: async (res) => {
+      if (res.confirm) {
+        submitting.value = true;
+        const { error } = await supabase.from('statement').delete().eq('id', form.value.id);
+        submitting.value = false;
+        
+        if (error) {
+          uni.showToast({ title: '删除失败: ' + error.message, icon: 'none' });
+        } else {
+          uni.showToast({ title: '已删除', icon: 'success' });
+          setTimeout(() => {
+            uni.navigateBack();
+          }, 1500);
+        }
+      }
+    }
+  });
+};
 </script>
 
 <style lang="scss">
@@ -200,8 +226,37 @@ const submit = async () => {
   .input { background: #f9f9f9; height: 44px; line-height: 44px; padding: 0 10px; border-radius: 6px; font-size: 15px; }
   .picker-view { color: #333; &.disabled { color: #999; } }
 }
-.footer-btn {
+.footer {
   margin-top: 30px;
-  .btn-primary { background: #6739b6; color: #fff; border-radius: 25px; }
+  display: flex;
+  gap: 15px;
+}
+.btn-delete {
+  flex: 1;
+  background-color: #f5f5f5;
+  color: #ff4d4f;
+  border-radius: 25px;
+  height: 46px;
+  line-height: 46px;
+  font-size: 16px;
+  border: none;
+  
+  &:active {
+    background-color: #eee;
+  }
+}
+.btn-save {
+  flex: 2;
+  background-color: #6739b6;
+  color: #fff;
+  border-radius: 25px;
+  height: 46px;
+  line-height: 46px;
+  font-size: 16px;
+  border: none;
+  
+  &:active {
+    opacity: 0.9;
+  }
 }
 </style>
