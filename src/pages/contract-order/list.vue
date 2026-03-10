@@ -196,8 +196,13 @@ const goDetail = (id: string) => {
   uni.navigateTo({ url: `/pages/contract-order/detail?id=${id}` });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -358,20 +363,25 @@ onShow(() => {
 .fab-add {
   position: fixed;
   bottom: 30px;
-  right: 20px;
-  width: 50px;
-  height: 50px;
-  background: linear-gradient(135deg, #6739b6, #855bc9);
+  right: 30px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
+  background-color: #6739b6;
   display: flex;
-  align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(103, 57, 182, 0.4);
+  align-items: center;
+  box-shadow: 0 4px 10px rgba(103, 57, 182, 0.4);
   
   .plus {
     color: #fff;
-    font-size: 28px;
+    font-size: 30px;
+    font-weight: 300;
     margin-top: -4px;
+  }
+  
+  &:active {
+    transform: scale(0.95);
   }
 }
 </style>

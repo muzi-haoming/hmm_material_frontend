@@ -130,7 +130,12 @@ const isProfileIncomplete = computed(() => {
 });
 
 onShow(async () => {
-    await fetchUserData();
+    uni.showLoading({ title: '加载中...', mask: true });
+    try {
+        await fetchUserData();
+    } finally {
+        uni.hideLoading();
+    }
 });
 
 const fetchUserData = async () => {
@@ -211,7 +216,7 @@ const saveProfile = async () => {
         const { error: profileError } = await supabase
             .from('profile')
             .update({ 
-                name: editForm.name,
+                full_name: editForm.name,
                 avatar_url: finalAvatarUrl,
                 nickname: editForm.nickname, 
                 email: editForm.email,

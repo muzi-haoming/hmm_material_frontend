@@ -22,8 +22,11 @@
         @click="goEdit(item.id)"
       >
         <view class="item-content">
-          <text class="item-name">订单: {{ item.code }}</text>
-          <text class="item-detail">数量: {{ item.quantity }}</text>
+          <text class="item-name">{{ item.code }}</text>
+          <view class="detail-row">
+            <text class="detail-label">数量：</text>
+            <text class="detail-value">{{ item.quantity }}</text>
+          </view>
           <view class="item-meta">
             <text class="tag status" :class="getStatusClass(item.status)">{{ getStatusText(item.status) }}</text>
           </view>
@@ -137,8 +140,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -201,6 +209,25 @@ onShow(() => {
   font-weight: bold;
   color: #333;
   margin-bottom: 5px;
+}
+
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {

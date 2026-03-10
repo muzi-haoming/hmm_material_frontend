@@ -24,12 +24,20 @@
         <view class="item-content">
           <text class="item-name">{{ item.name }}</text>
           <text class="item-code">编号: {{ item.code }}</text>
+          <text class="item-info">工地: {{ item.site_name }}</text>
+          <text v-if="item.manufacturers && item.manufacturers.length > 0" class="item-info">
+            厂家: {{ item.manufacturers.join('、') }}
+          </text>
           <view class="item-meta">
             <text class="tag status" :class="getStatusClass(item)">{{ getStatusText(item) }}</text>
           </view>
         </view>
         <view class="item-actions">
-          <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
+          <text 
+            class="iconfont icon-delete" 
+            @click.stop="handleDelete(item)"
+            v-if="currentUser?.is_admin || (item.creator === currentUser?.id && !item.is_confirmed)"
+          ></text>
         </view>
       </view>
       
@@ -38,7 +46,11 @@
       </view>
     </view>
 
-    <view class="fab-add" @click="goAdd">
+    <view 
+      class="fab-add" 
+      @click="goAdd"
+      v-if="currentUser?.is_admin || (currentUser?.site_permissions && currentUser.site_permissions.length > 0)"
+    >
       <text class="plus">+</text>
     </view>
   </view>
@@ -48,25 +60,42 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
+import { getBillStatus, BillStatusText } from '@/types';
+import { getCurrentUser, canDo, hasPermission } from '@/utils/permission';
 
 interface Contract {
   id: string;
   name: string;
   code: string;
+  site_name: string;
+  manufacturers: string[];
   is_confirmed: boolean;
-  is_archived: boolean;
+  is_completed: boolean;
+  creator: string;
 }
 
 const list = ref<Contract[]>([]);
 const keyword = ref('');
 const loading = ref(false);
+const currentUser = ref<any>(null);
 
 const fetchData = async () => {
   loading.value = true;
+  currentUser.value = getCurrentUser();
+  
+  // 查询合同
   let query = supabase
     .from('contract')
-    .select('id, name, code, is_confirmed, is_archived')
-    .order('create_time', { ascending: false });
+    .select(`
+      id, 
+      name, 
+      code, 
+      is_confirmed, 
+      is_completed,
+      creator,
+      site:site_id(name)
+    `)
+    .order('name', { ascending: true });
 
   if (keyword.value) {
     query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);
@@ -77,20 +106,47 @@ const fetchData = async () => {
   if (error) {
     console.error('Error fetching contract:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
-  } else {
-    list.value = data || [];
+    loading.value = false;
+    return;
   }
+
+  // 查询关联的厂家
+  if (data && data.length > 0) {
+    const contractIds = data.map(c => c.id);
+    const { data: relaData } = await supabase
+      .from('contract_manufacturer_rela')
+      .select('contract_id, manufacturer:manufacturer_id(name)')
+      .in('contract_id', contractIds);
+
+    // 组装数据
+    list.value = data.map(contract => ({
+      id: contract.id,
+      name: contract.name,
+      code: contract.code,
+      // @ts-ignore
+      site_name: contract.site?.name || '未知工地',
+      manufacturers: relaData
+        ?.filter(r => r.contract_id === contract.id)
+        // @ts-ignore
+        .map(r => r.manufacturer?.name) || [],
+      is_confirmed: contract.is_confirmed,
+      is_completed: contract.is_completed,
+      creator: contract.creator
+    }));
+  } else {
+    list.value = [];
+  }
+  
   loading.value = false;
 };
 
 const getStatusText = (item: Contract) => {
-  if (item.is_archived) return '已封存';
-  if (item.is_confirmed) return '已确认';
-  return '待确认';
+  const status = getBillStatus(item.is_confirmed, item.is_completed);
+  return BillStatusText[status];
 };
 
 const getStatusClass = (item: Contract) => {
-  if (item.is_archived) return 'archived';
+  if (item.is_completed) return 'completed';
   if (item.is_confirmed) return 'confirmed';
   return 'pending';
 };
@@ -109,16 +165,25 @@ const goAdd = () => {
 };
 
 const goEdit = (id: string) => {
-  uni.navigateTo({ url: `/pages/contract/edit?id=${id}` });
+  uni.navigateTo({ url: `/pages/contract/detail?id=${id}` });
 };
 
-const handleDelete = async (id: string) => {
+const handleDelete = async (item: Contract) => {
+  if (!canDo('delete', item)) {
+    uni.showToast({ title: '无权删除或状态不允许', icon: 'none' });
+    return;
+  }
+
   uni.showModal({
     title: '提示',
     content: '确定要删除该合同吗？',
     success: async (res) => {
       if (res.confirm) {
-        const { error } = await supabase.from('contract').delete().eq('id', id);
+        // 先删除关联的厂家关系
+        await supabase.from('contract_manufacturer_rela').delete().eq('contract_id', item.id);
+        
+        // 再删除合同
+        const { error } = await supabase.from('contract').delete().eq('id', item.id);
         if (error) {
           uni.showToast({ title: '删除失败', icon: 'none' });
         } else {
@@ -130,8 +195,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -187,6 +257,7 @@ onShow(() => {
 .item-content {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .item-name {
@@ -199,24 +270,40 @@ onShow(() => {
 .item-code {
   font-size: 13px;
   color: #999;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
+}
+
+.item-info {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 3px;
 }
 
 .item-meta {
   display: flex;
   align-items: center;
+  margin-top: 5px;
 }
 
 .tag {
   font-size: 12px;
-  padding: 2px 6px;
+  padding: 2px 8px;
   border-radius: 4px;
   background-color: #eee;
   color: #666;
   
-  &.confirmed { background-color: #e6f7ff; color: #1890ff; }
-  &.pending { background-color: #fff7e6; color: #fa8c16; }
-  &.archived { background-color: #f5f5f5; color: #999; }
+  &.confirmed { 
+    background-color: #e6f7ff; 
+    color: #1890ff; 
+  }
+  &.pending { 
+    background-color: #fff7e6; 
+    color: #fa8c16; 
+  }
+  &.completed { 
+    background-color: #f6ffed; 
+    color: #52c41a; 
+  }
 }
 
 .item-actions {

@@ -45,6 +45,7 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
+import { getCurrentUser } from '@/utils/permission';
 
 interface Manufacturer {
   id: string;
@@ -61,7 +62,7 @@ const fetchData = async () => {
   let query = supabase
     .from('manufacturer')
     .select('id, name, code')
-    .order('create_time', { ascending: false });
+    .order('name', { ascending: true });
 
   if (keyword.value) {
     query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);
@@ -113,8 +114,20 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  const user = getCurrentUser();
+  if (!user?.is_admin) {
+    uni.showToast({ title: '无权访问', icon: 'none' });
+    setTimeout(() => uni.navigateBack(), 1500);
+    return;
+  }
+  
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 

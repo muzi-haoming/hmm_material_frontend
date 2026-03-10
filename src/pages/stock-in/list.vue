@@ -23,7 +23,18 @@
       >
         <view class="item-content">
           <text class="item-name">{{ item.code }}</text>
-          <text class="item-detail">数量: {{ item.quantity }}</text>
+          <view class="detail-row">
+            <text class="detail-label">物料：</text>
+            <text class="detail-value">{{ item.product_name }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">厂家：</text>
+            <text class="detail-value">{{ item.manufacturer_name }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">数量：</text>
+            <text class="detail-value">{{ item.quantity }}</text>
+          </view>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -50,6 +61,8 @@ interface StockIn {
   id: string;
   code: string;
   quantity: number;
+  product_name?: string;
+  manufacturer_name?: string;
 }
 
 const list = ref<StockIn[]>([]);
@@ -59,8 +72,14 @@ const loading = ref(false);
 const fetchData = async () => {
   loading.value = true;
   let query = supabase
-    .from('stock_in')
-    .select('id, code, quantity')
+    .from('general_stock_in')
+    .select(`
+      id, code, quantity,
+      general_purchase:general_purchase_id (
+        payer:payer_manufacturer_id(name),
+        material:material_id(name)
+      )
+    `)
     .order('create_time', { ascending: false });
 
   if (keyword.value) {
@@ -70,10 +89,23 @@ const fetchData = async () => {
   const { data, error } = await query;
   
   if (error) {
-    console.error('Error fetching stock_in:', error);
+    console.error('Error fetching general_stock_in:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } else {
-    list.value = data || [];
+    // Transform
+    list.value = (data || []).map((item: any) => {
+        // Handle joined data which might be array or object
+        const gp = Array.isArray(item.general_purchase) ? item.general_purchase[0] : item.general_purchase;
+        const material = gp?.material;
+        
+        return {
+            id: item.id,
+            code: item.code,
+            quantity: item.quantity,
+            product_name: material?.name || '未知物料',
+            manufacturer_name: gp?.payer?.name || '未知厂家'
+        };
+    });
   }
   loading.value = false;
 };
@@ -101,7 +133,7 @@ const handleDelete = async (id: string) => {
     content: '确定要删除该入库单吗？',
     success: async (res) => {
       if (res.confirm) {
-        const { error } = await supabase.from('stock_in').delete().eq('id', id);
+        const { error } = await supabase.from('general_stock_in').delete().eq('id', id);
         if (error) {
           uni.showToast({ title: '删除失败', icon: 'none' });
         } else {
@@ -113,8 +145,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -177,6 +214,25 @@ onShow(() => {
   font-weight: bold;
   color: #333;
   margin-bottom: 5px;
+}
+
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {

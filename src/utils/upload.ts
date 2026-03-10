@@ -7,16 +7,17 @@ import { supabase, supabaseUrl } from './supabase';
  * @returns 上传后的公开 URL 或 null (失败时)
  */
 export const uploadAvatar = async (filePath: string, userId: string): Promise<string | null> => {
-    if (!filePath || (!filePath.startsWith('http://tmp') && !filePath.startsWith('wxfile://'))) {
-        // 如果不是临时文件，直接返回原路径 (可能是已有 URL)
+    // 如果为空或者是已有的 supabase 线上地址，直接返回
+    if (!filePath || filePath.startsWith(supabaseUrl)) {
         return filePath;
     }
 
     try {
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
-        const fileName = `avatar_${userId}_${Date.now()}.png`;
-        const bucketName = 'avatars';
+        // Database RLS requires filename to be [userId].[ext]
+        const fileName = `${userId}.png`;
+        const bucketName = 'avatar';
 
         const uploadRes = await new Promise<any>((resolve, reject) => {
             uni.uploadFile({
@@ -33,8 +34,8 @@ export const uploadAvatar = async (filePath: string, userId: string): Promise<st
         });
 
         if (uploadRes.statusCode >= 200 && uploadRes.statusCode < 300) {
-            // 构造 Public URL
-            return `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fileName}`;
+            // 构造 Public URL with timestamp to bust cache
+            return `${supabaseUrl}/storage/v1/object/public/${bucketName}/${fileName}?t=${Date.now()}`;
         } else {
             console.error('Avatar Upload Failed:', uploadRes);
             return null;

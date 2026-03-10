@@ -23,8 +23,18 @@
       >
         <view class="item-content">
           <text class="item-name">{{ item.name }}</text>
-          <text class="item-code">编号: {{ item.code }}</text>
-          <text class="item-detail">单位: {{ item.unit }} | 单价: ¥{{ item.price }}</text>
+          <view class="detail-row">
+            <text class="detail-label">编号：</text>
+            <text class="detail-value">{{ item.code }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">单位：</text>
+            <text class="detail-value">{{ item.unit }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">单价：</text>
+            <text class="detail-value">¥{{ item.price }}</text>
+          </view>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -46,6 +56,7 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
+import { getCurrentUser } from '@/utils/permission';
 
 interface Product {
   id: string;
@@ -64,7 +75,7 @@ const fetchData = async () => {
   let query = supabase
     .from('product')
     .select('id, name, code, unit, price')
-    .order('create_time', { ascending: false });
+    .order('name', { ascending: true });
 
   if (keyword.value) {
     query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);
@@ -116,8 +127,20 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  const user = getCurrentUser();
+  if (!user?.is_admin) {
+    uni.showToast({ title: '无权访问', icon: 'none' });
+    setTimeout(() => uni.navigateBack(), 1500);
+    return;
+  }
+  
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -182,10 +205,23 @@ onShow(() => {
   margin-bottom: 5px;
 }
 
-.item-code {
+.detail-row {
+  display: flex;
   font-size: 13px;
-  color: #999;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {

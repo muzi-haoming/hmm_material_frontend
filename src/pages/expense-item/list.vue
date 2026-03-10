@@ -7,7 +7,7 @@
           class="search-input" 
           type="text" 
           v-model="keyword" 
-          placeholder="搜索费用项名称" 
+          placeholder="搜索费用项名称或编号" 
           @confirm="handleSearch"
         />
         <text v-if="keyword" class="iconfont icon-close" @click="clearSearch"></text>
@@ -22,8 +22,11 @@
         @click="goEdit(item.id)"
       >
         <view class="item-content">
-          <text class="item-name">{{ item.code }}</text>
-          <text class="item-detail">{{ item.name }}</text>
+          <text class="item-name">{{ item.name }}</text>
+          <view class="detail-row">
+            <text class="detail-label">编号：</text>
+            <text class="detail-value">{{ item.code }}</text>
+          </view>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -45,11 +48,12 @@
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
+import { getCurrentUser } from '@/utils/permission';
 
 interface ExpenseItem {
   id: string;
-  code: string;
   name: string;
+  code: string;
 }
 
 const list = ref<ExpenseItem[]>([]);
@@ -60,17 +64,17 @@ const fetchData = async () => {
   loading.value = true;
   let query = supabase
     .from('statement_other_expenses_item')
-    .select('id, code, name')
-    .order('create_time', { ascending: false });
+    .select('*')
+    .order('name', { ascending: true });
 
   if (keyword.value) {
-    query = query.ilike('name', `%${keyword.value}%`);
+    query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);
   }
 
   const { data, error } = await query;
   
   if (error) {
-    console.error('Error fetching expense items:', error);
+    console.error('Error fetching data:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } else {
     list.value = data || [];
@@ -103,7 +107,7 @@ const handleDelete = async (id: string) => {
       if (res.confirm) {
         const { error } = await supabase.from('statement_other_expenses_item').delete().eq('id', id);
         if (error) {
-          uni.showToast({ title: '删除失败', icon: 'none' });
+          uni.showToast({ title: '删除失败: ' + error.message, icon: 'none' });
         } else {
           uni.showToast({ title: '已删除', icon: 'success' });
           fetchData();
@@ -113,8 +117,20 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  const user = getCurrentUser();
+  if (!user?.is_admin) {
+    uni.showToast({ title: '无权访问', icon: 'none' });
+    setTimeout(() => uni.navigateBack(), 1500);
+    return;
+  }
+  
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -179,10 +195,23 @@ onShow(() => {
   margin-bottom: 5px;
 }
 
-.item-detail {
+.detail-row {
+  display: flex;
   font-size: 13px;
-  color: #666;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-actions {

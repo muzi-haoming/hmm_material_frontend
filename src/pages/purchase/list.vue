@@ -23,7 +23,23 @@
       >
         <view class="item-content">
           <text class="item-name">{{ item.code }}</text>
-          <text class="item-detail">数量: {{ item.quantity }} | 金额: ¥{{ item.amount }}</text>
+          <view class="detail-row">
+            <text class="detail-label">付款：</text>
+            <text class="detail-value">{{ item.payer?.name || '-' }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">收款：</text>
+            <text class="detail-value">{{ item.payee?.name || '-' }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">物料：</text>
+            <text class="detail-value">{{ item.material?.name || '-' }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">数量：</text>
+            <text class="detail-value">{{ item.quantity }}</text>
+          </view>
+            <text class="item-status" :class="getStatus(item).class">{{ getStatus(item).text }}</text>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -50,18 +66,30 @@ interface Purchase {
   id: string;
   code: string;
   quantity: number;
-  amount: number;
+  is_confirmed: boolean;
+  is_completed: boolean;
+  payer?: { name: string };
+  payee?: { name: string };
+  material?: { name: string };
 }
 
 const list = ref<Purchase[]>([]);
 const keyword = ref('');
 const loading = ref(false);
 
+const getStatus = (item: Purchase) => {
+  if (item.is_completed) return { text: '已完成', class: 'completed' };
+  if (item.is_confirmed) return { text: '已确认', class: 'confirmed' };
+  return { text: '待确认', class: 'pending' };
+};
+
 const fetchData = async () => {
   loading.value = true;
   let query = supabase
-    .from('purchase')
-    .select('id, code, quantity, amount')
+    .from('general_purchase')
+    .select('id, code, quantity, is_confirmed, is_completed, payer:payer_manufacturer_id(name), payee:payee_manufacturer_id(name), material:material_id(name)')
+    .order('is_completed', { ascending: true })
+    .order('is_confirmed', { ascending: true })
     .order('create_time', { ascending: false });
 
   if (keyword.value) {
@@ -74,7 +102,17 @@ const fetchData = async () => {
     console.error('Error fetching purchase:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } else {
-    list.value = data || [];
+    // Transform data to ensure types match
+    list.value = (data || []).map((item: any) => ({
+        id: item.id,
+        code: item.code,
+        quantity: item.quantity,
+        is_confirmed: item.is_confirmed,
+        is_completed: item.is_completed,
+        payer: Array.isArray(item.payer) ? item.payer[0] : item.payer,
+        payee: Array.isArray(item.payee) ? item.payee[0] : item.payee,
+        material: Array.isArray(item.material) ? item.material[0] : item.material
+    }));
   }
   loading.value = false;
 };
@@ -102,7 +140,7 @@ const handleDelete = async (id: string) => {
     content: '确定要删除该采购单吗？',
     success: async (res) => {
       if (res.confirm) {
-        const { error } = await supabase.from('purchase').delete().eq('id', id);
+        const { error } = await supabase.from('general_purchase').delete().eq('id', id);
         if (error) {
           uni.showToast({ title: '删除失败', icon: 'none' });
         } else {
@@ -114,8 +152,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -180,6 +223,25 @@ onShow(() => {
   margin-bottom: 5px;
 }
 
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
+}
+
 .item-detail {
   font-size: 13px;
   color: #666;
@@ -224,5 +286,18 @@ onShow(() => {
   &:active {
     transform: scale(0.95);
   }
+}
+.item-status {
+    font-size: 12px;
+    color: #fa8c16;
+    margin-top: 4px;
+
+    &.confirmed {
+        color: #1890ff;
+    }
+
+    &.completed {
+        color: #52c41a;
+    }
 }
 </style>

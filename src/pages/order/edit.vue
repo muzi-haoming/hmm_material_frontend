@@ -3,7 +3,7 @@
     <view class="form-card">
       <view class="form-item">
         <text class="label required">订单编号</text>
-        <input class="input" type="text" v-model="form.code" placeholder="请输入订单编号" />
+        <input class="input" type="text" v-model="form.code" disabled placeholder="自动生成" />
       </view>
 
       <view class="form-item">
@@ -51,6 +51,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
+import { generateCode } from '@/utils/codeGen';
 import { onLoad } from '@dcloudio/uni-app';
 
 
@@ -92,6 +93,8 @@ onLoad(async (options: any) => {
     isEdit.value = true;
     form.value.id = options.id;
     await loadData(options.id);
+  } else {
+    form.value.code = await generateCode('order', 'HTDD');
   }
 });
 
@@ -168,7 +171,6 @@ const handleDelete = async () => {
 };
 
 const handleSave = async () => {
-  if (!form.value.code) return uni.showToast({ title: '请输入订单编号', icon: 'none' });
   if (!form.value.contract_id) return uni.showToast({ title: '请选择合同', icon: 'none' });
   if (!form.value.product_id) return uni.showToast({ title: '请选择产品', icon: 'none' });
   if (!form.value.quantity) return uni.showToast({ title: '请输入数量', icon: 'none' });

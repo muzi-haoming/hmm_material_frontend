@@ -7,7 +7,7 @@
           class="search-input" 
           type="text" 
           v-model="keyword" 
-          placeholder="搜索产品名称" 
+          placeholder="搜索物料名称" 
           @confirm="handleSearch"
         />
         <text v-if="keyword" class="iconfont icon-close" @click="clearSearch"></text>
@@ -22,9 +22,15 @@
         @click="goEdit(item.id)"
       >
         <view class="item-content">
-          <text class="item-name">{{ item.product_name || '未知产品' }}</text>
-          <text class="item-sub">{{ item.manufacturer_name || '未知厂家' }}</text>
-          <text class="item-detail">库存数量: {{ item.quantity }}</text>
+          <text class="item-name">{{ item.material_name || '未知物料' }}</text>
+          <view class="detail-row">
+            <text class="detail-label">厂家：</text>
+            <text class="detail-value">{{ item.manufacturer_name || '-' }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">库存：</text>
+            <text class="detail-value">{{ item.quantity }}</text>
+          </view>
         </view>
         <view class="item-actions">
           <text class="iconfont icon-delete" @click.stop="handleDelete(item.id)"></text>
@@ -50,8 +56,8 @@ import { onShow } from '@dcloudio/uni-app';
 interface Stock {
   id: string;
   quantity: number;
-  product_id: string;
-  product_name?: string;
+  material_id: string;
+  material_name?: string;
   manufacturer_id: string;
   manufacturer_name?: string;
 }
@@ -62,10 +68,10 @@ const loading = ref(false);
 
 const fetchData = async () => {
   loading.value = true;
-  // 关联产品和厂家表
+  // 关联物料和厂家表
   let query = supabase
     .from('stock')
-    .select('*, product:product_id(name), manufacturer:manufacturer_id(name)');
+    .select('*, material:material_id(name), manufacturer:manufacturer_id(name)');
   
   const { data, error } = await query;
   
@@ -76,13 +82,13 @@ const fetchData = async () => {
     // 映射名称
     list.value = (data || []).map((item: any) => ({
       ...item,
-      product_name: item.product?.name,
+      material_name: item.material?.name,
       manufacturer_name: item.manufacturer?.name
     }));
 
     if (keyword.value) {
       list.value = list.value.filter(item => 
-        (item.product_name?.includes(keyword.value) || item.manufacturer_name?.includes(keyword.value))
+        (item.material_name?.includes(keyword.value) || item.manufacturer_name?.includes(keyword.value))
       );
     }
   }
@@ -124,8 +130,13 @@ const handleDelete = async (id: string) => {
   });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -190,10 +201,23 @@ onShow(() => {
   margin-bottom: 5px;
 }
 
-.item-sub {
-  font-size: 14px;
-  color: #666;
-  margin-bottom: 5px;
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #666;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {

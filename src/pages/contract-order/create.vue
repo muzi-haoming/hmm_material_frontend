@@ -8,8 +8,9 @@
           :range="contracts" 
           range-key="name" 
           @change="onContractChange"
+          :disabled="isFixedContract"
         >
-          <view class="picker-value" :class="{ placeholder: !form.contract_id }">
+          <view class="picker-value" :class="{ placeholder: !form.contract_id, disabled: isFixedContract }">
             {{ getContractName() || '请选择合同' }}
           </view>
         </picker>
@@ -39,6 +40,20 @@
         />
         <text class="unit" v-if="selectedProduct">{{ selectedProduct.unit }}</text>
       </view>
+
+      <view class="form-item">
+        <text class="label">执行模式</text>
+        <radio-group @change="onModeChange" class="mode-group">
+            <label class="radio-label">
+                <radio value="self_produced" :checked="form.mode === 'self_produced'" color="#6739b6" style="transform:scale(0.8)" />
+                <text>自产自销</text>
+            </label>
+            <label class="radio-label">
+                <radio value="purchase" :checked="form.mode === 'purchase'" color="#6739b6" style="transform:scale(0.8)" />
+                <text>外协采购</text>
+            </label>
+        </radio-group>
+      </view>
     </view>
 
     <view class="submit-btn-box">
@@ -50,17 +65,23 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { supabase } from '@/utils/supabase';
+import { generateCode } from '@/utils/codeGen';
 import { onLoad } from '@dcloudio/uni-app';
+import { getCurrentUser, type UserInfo } from '@/utils/permission';
 
 const form = ref({
   contract_id: '',
   product_id: '',
-  quantity: ''
+  quantity: '',
+  mode: 'self_produced'
 });
 
 const contracts = ref<any[]>([]);
 const products = ref<any[]>([]);
 const submitting = ref(false);
+const currentUser = ref<UserInfo | null>(null);
+
+const isFixedContract = ref(false);
 
 const selectedContract = computed(() => contracts.value.find(c => c.id === form.value.contract_id));
 const selectedProduct = computed(() => products.value.find(p => p.id === form.value.product_id));
@@ -68,19 +89,55 @@ const selectedProduct = computed(() => products.value.find(p => p.id === form.va
 const getContractName = () => selectedContract.value?.name;
 const getProductName = () => selectedProduct.value?.name;
 
-onLoad(() => {
-  fetchContracts();
-  fetchProducts();
+onLoad(async (options: any) => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    currentUser.value = await getCurrentUser();
+    
+    if (options.contractId) {
+       form.value.contract_id = options.contractId;
+       isFixedContract.value = true;
+    }
+    
+    await fetchContracts();
+    await fetchProducts();
+  } finally {
+    uni.hideLoading();
+  }
 });
 
 const fetchContracts = async () => {
-  const { data, error } = await supabase
+  // Only fetching confirmed and incomplete contracts
+  let query = supabase
     .from('contract')
-    .select('id, name, code, status')
-    //.eq('status', '1') // Assuming '1' is active contract? Schema says char(1). Let's list all for now or check business logic.
+    .select('id, name, code, is_confirmed, is_completed, site_id')
+    .eq('is_confirmed', true)
+    .eq('is_completed', false)
     .order('create_time', { ascending: false });
+
+  const { data, error } = await query;
     
-  if (data) contracts.value = data;
+  if (data) {
+    if (currentUser.value?.is_admin) {
+        contracts.value = data;
+    } else {
+        // Only show contracts for sites the user manages
+        const allowedSites = currentUser.value?.site_permissions || [];
+        contracts.value = data.filter(c => allowedSites.includes(c.site_id));
+    }
+    
+    // If fixed contract is set but not in list (e.g. maybe rules changed?), we should probably fetch it to validly display it
+    if (isFixedContract.value && !contracts.value.find(c => c.id === form.value.contract_id)) {
+        const { data: singleContract } = await supabase
+            .from('contract')
+            .select('id, name, code, is_confirmed, is_completed, site_id')
+            .eq('id', form.value.contract_id)
+            .single();
+        if (singleContract) {
+            contracts.value.push(singleContract);
+        }
+    }
+  }
 };
 
 const fetchProducts = async () => {
@@ -93,6 +150,7 @@ const fetchProducts = async () => {
 };
 
 const onContractChange = (e: any) => {
+  if (isFixedContract.value) return; 
   const index = e.detail.value;
   form.value.contract_id = contracts.value[index].id;
 };
@@ -102,6 +160,10 @@ const onProductChange = (e: any) => {
   form.value.product_id = products.value[index].id;
 };
 
+const onModeChange = (e: any) => {
+    form.value.mode = e.detail.value;
+};
+
 const submit = async () => {
   if (!form.value.contract_id) return uni.showToast({ title: '请选择合同', icon: 'none' });
   if (!form.value.product_id) return uni.showToast({ title: '请选择产品', icon: 'none' });
@@ -109,26 +171,24 @@ const submit = async () => {
 
   submitting.value = true;
   
-  // Generate a simple code if DB doesn't auto-generate or require it.
-  // Schema says 'code' is not null. Current tables use uuid, but 'code' is text.
-  // Usually backend or trigger handles it, or frontend generates.
-  // Let's generate a simple timestamp-based code for now.
-  const code = `ORD${Date.now()}`;
+  // Generate code
+  const code = await generateCode('contract_order', 'HTDD');
 
-  const { error } = await supabase.from('order').insert({
+  const { error } = await supabase.from('contract_order').insert({
     code: code,
     contract_id: form.value.contract_id,
     product_id: form.value.product_id,
     quantity: parseFloat(form.value.quantity),
-    status: '0', // 待确认
-    // type is null initially
+    mode: form.value.mode,
+    is_confirmed: false,
+    is_completed: false
   });
 
   submitting.value = false;
 
   if (error) {
     console.error('Create order error:', error);
-    uni.showToast({ title: '创建失败', icon: 'none' });
+    uni.showToast({ title: '创建失败: ' + error.message, icon: 'none' });
   } else {
     uni.showToast({ title: '创建成功', icon: 'success' });
     setTimeout(() => {
@@ -180,6 +240,11 @@ const submit = async () => {
     &.placeholder {
       color: #999;
     }
+    
+    &.disabled {
+      color: #666;
+      background-color: transparent;
+    }
   }
   
   .input {
@@ -193,6 +258,23 @@ const submit = async () => {
     font-size: 14px;
     color: #999;
   }
+}
+
+.mode-group {
+    flex: 1;
+    display: flex;
+    gap: 20px;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #333;
+    
+    text {
+        margin-left: 4px;
+    }
 }
 
 .submit-btn-box {

@@ -9,7 +9,10 @@
       >
         <view class="item-content">
           <text class="item-name">{{ item.name }} ({{ item.nickname }})</text>
-          <text class="item-detail">角色: {{ item.role_name || '未分配' }}</text>
+          <view class="detail-row">
+            <text class="detail-label">角色：</text>
+            <text class="detail-value">{{ item.role_name || '未分配' }}</text>
+          </view>
         </view>
         <view class="item-arrow">
           <text class="iconfont icon-right"></text>
@@ -41,15 +44,17 @@ const fetchData = async () => {
   // Refactored: Query from 'profile' table instead of 'user'
   const { data, error } = await supabase
     .from('profile')
-    .select('*, user_role:role_id(name)')
-    .order('create_time', { ascending: false });
+    .select('*, role:role_id(name)')
+    .order('full_name', { ascending: true });
   
   if (error) {
-    uni.showToast({ title: '加载失败', icon: 'none' });
+    uni.showToast({ title: '加载失败: ' + error.message, icon: 'none' });
+    console.error('Fetch Profiles Error:', error);
   } else {
     list.value = (data || []).map((item: any) => ({
       ...item,
-      role_name: item.user_role?.name
+      name: item.full_name || item.nickname || '未设置姓名',
+      role_name: item.role?.name
     }));
   }
   loading.value = false;
@@ -60,8 +65,13 @@ const goEdit = (id: string) => {
   uni.navigateTo({ url: `/pages/profile/edit?id=${id}` });
 };
 
-onShow(() => {
-  fetchData();
+onShow(async () => {
+  uni.showLoading({ title: '加载中...', mask: true });
+  try {
+    await fetchData();
+  } finally {
+    uni.hideLoading();
+  }
 });
 </script>
 
@@ -97,6 +107,26 @@ onShow(() => {
   font-weight: bold;
   color: #333;
   margin-bottom: 5px;
+}
+
+.detail-row {
+  display: flex;
+  font-size: 13px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  
+  .detail-label {
+    color: #999;
+    width: 48px;
+    flex-shrink: 0;
+  }
+  
+  .detail-value {
+    color: #6739b6;
+    font-weight: bold;
+    flex: 1;
+    word-break: break-all;
+  }
 }
 
 .item-detail {
