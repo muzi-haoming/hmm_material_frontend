@@ -7,7 +7,7 @@
       </view>
       <view class="form-item">
         <text class="label required">关联通用采购单</text>
-        <picker @change="bindOrderChange" :value="orderIndex" :range="orders" range-key="code" :disabled="isEdit || isPurchaseCompleted">
+        <picker @change="onOrderChange" :value="orderIndex" :range="orders" range-key="code" :disabled="isEdit || isPurchaseCompleted">
           <view class="input picker-view" :class="{ disabled: isEdit || isPurchaseCompleted }">
             {{ orders[orderIndex] ? orders[orderIndex].code : '请选择采购单' }}
           </view>
@@ -27,20 +27,32 @@
         <input class="input" type="number" v-model="form.quantity" placeholder="请输入数量" :disabled="isPurchaseCompleted" />
       </view>
       
-      <view class="form-item">
-        <text class="label">附件/凭证</text>
-        <view class="upload-box">
-             <view class="upload-btn" @click="chooseImage" v-if="!form.file_url && !tempFile && !isPurchaseCompleted">
-                 <text class="plus">+</text>
-                 <text class="text">上传图片</text>
+      <!-- 附件上传区域 -->
+      <view class="attachment-section">
+        <view class="section-header">
+          <view class="title">
+            <text class="blue-bar"></text>
+            <text>附件/凭证</text>
+          </view>
+        </view>
+        <view class="upload-container">
+          <view class="upload-btn" @click="chooseAttachment" v-if="!form.file_url && !tempFile && !isPurchaseCompleted">
+            <text class="icon-plus">+</text>
+            <text class="upload-text">添加附件</text>
+          </view>
+          
+          <view class="file-preview" v-if="form.file_url || tempFile">
+             <view class="file-info" @click="previewAttachment">
+                 <image v-if="isImage(form.file_url || tempFile)" :src="tempFile || form.file_url" mode="aspectFill" class="preview-img"></image>
+                 <view v-else class="document-icon">
+                    <text class="icon-file">📄</text>
+                    <text class="file-name">{{ tempFileName || '已上传的文件' }}</text>
+                 </view>
              </view>
-             <view class="preview-box" v-else-if="form.file_url || tempFile">
-                 <image class="preview-img" :src="tempFile || form.file_url" mode="aspectFill"></image>
-                 <view class="delete-icon" @click="deleteImage" v-if="!isPurchaseCompleted">×</view>
+             <view class="delete-btn" @click.stop="deleteAttachment" v-if="!isPurchaseCompleted">
+                 <text>×</text>
              </view>
-             <view class="empty-text" v-else>
-                 无附件
-             </view>
+          </view>
         </view>
       </view>
     </view>
@@ -53,6 +65,30 @@
       <button class="btn-save" @click="handleSave" :disabled="loading">
         {{ loading ? '保存中...' : '保存' }}
       </button>
+      
+      <!-- Receipt Generation Button -->
+      <button 
+          v-if="isEdit && isStockManagedManufacturer" 
+          class="btn-receipt" 
+          @click="generateReceipt"
+      >
+          生成凭证
+      </button>
+    </view>
+    
+    <!-- Receipt Prompt Modal -->
+    <view class="receipt-modal" v-if="showReceiptPrompt">
+        <view class="modal-mask"></view>
+        <view class="modal-content">
+            <view class="modal-icon">✅</view>
+            <view class="modal-title">出库单保存成功</view>
+            <view class="modal-desc">已为您分配流水单号：{{ form.code }}。当前发货厂家开启了库存管理，是否立即生成用于打印签署的纸质凭单？</view>
+            
+            <view class="modal-actions">
+                <button class="btn-cancel" @click="closeReceiptPrompt">稍后再说</button>
+                <button class="btn-confirm" @click="generateReceiptFromPrompt">立即生成</button>
+            </view>
+        </view>
     </view>
   </view>
 </template>
@@ -87,11 +123,19 @@ const form = ref<StockOutForm>({
   quantity: '',
   file_url: ''
 });
+
+const tempFile = ref('');
+const tempFileName = ref('');
 const orders = ref<GeneralPurchaseOption[]>([]);
 const orderIndex = ref(-1);
 const loading = ref(false);
 const isEdit = ref(false);
 const isPurchaseCompleted = ref(false);
+const isStockManagedManufacturer = ref(false);
+
+const showReceiptPrompt = ref(false);
+const generatedReceiptId = ref('');
+
 const selectedOrder = computed(() => {
     return orderIndex.value >= 0 ? orders.value[orderIndex.value] : null;
 });
@@ -127,11 +171,15 @@ onLoad(async (options: any) => {
                   form.value.quantity = String(selected.quantity);
               }
           }
+          if (orders.value[index].payee_manufacturer_id) {
+               checkManufacturerStockSetting(orders.value[index].payee_manufacturer_id);
+          }
       } else {
           await loadSpecificOrder(targetId);
       }
   }
 });
+
 const loadSpecificOrder = async (id: string) => {
   const { data, error } = await supabase
     .from('general_purchase')
@@ -144,17 +192,16 @@ const loadSpecificOrder = async (id: string) => {
     .single();
     
   if (data) {
+      const orderData = data as any;
       const option: GeneralPurchaseOption = {
-          id: data.id,
-          code: data.code,
-          payee_manufacturer_id: data.payee_manufacturer_id,
-          // @ts-ignore
-          payee_manufacturer_name: Array.isArray(data.payee) ? data.payee[0]?.name : (data.payee?.name || '未知厂家'),
-          material_id: data.material_id,
-          // @ts-ignore
-          material_name: Array.isArray(data.material) ? data.material[0]?.name : (data.material?.name || '未知物料'),
-          quantity: data.quantity,
-          is_completed: data.is_completed
+          id: orderData.id,
+          code: orderData.code,
+          payee_manufacturer_id: orderData.payee_manufacturer_id,
+          payee_manufacturer_name: Array.isArray(orderData.payee) ? orderData.payee[0]?.name : (orderData.payee?.name || '未知厂家'),
+          material_id: orderData.material_id,
+          material_name: Array.isArray(orderData.material) ? orderData.material[0]?.name : (orderData.material?.name || '未知物料'),
+          quantity: orderData.quantity,
+          is_completed: orderData.is_completed
       };
       
       const existing = orders.value.findIndex(o => o.id === option.id);
@@ -172,6 +219,7 @@ const loadSpecificOrder = async (id: string) => {
       }
   }
 };
+
 const fetchOptions = async () => {
   const user = getCurrentUser();
   
@@ -226,16 +274,38 @@ const loadData = async (id: string) => {
     form.value.general_purchase_id = data.general_purchase_id;
     form.value.quantity = data.quantity;
     form.value.file_url = data.file_url || '';
+    
+    if (form.value.file_url) {
+        // 解析出文件名展示
+        const urlParts = form.value.file_url.split('/');
+        tempFileName.value = urlParts[urlParts.length - 1];
+    }
+    
     // Set Index
     orderIndex.value = orders.value.findIndex(o => o.id === data.general_purchase_id);
   }
 };
-const bindOrderChange = (e: any) => {
+const onOrderChange = (e: any) => {
   orderIndex.value = e.detail.value;
   const selected = orders.value[orderIndex.value];
   form.value.general_purchase_id = selected.id;
   isPurchaseCompleted.value = !!selected.is_completed;
+  
+  // Set and check stock manage flag based on payee
+  if (selected.payee_manufacturer_id) {
+       checkManufacturerStockSetting(selected.payee_manufacturer_id);
+  }
 };
+
+const checkManufacturerStockSetting = async (id: string) => {
+    isStockManagedManufacturer.value = false;
+    if (!id) return;
+    const { data } = await supabase.from('manufacturer').select('is_manage_stock').eq('id', id).single();
+    if (data && data.is_manage_stock) {
+        isStockManagedManufacturer.value = true;
+    }
+};
+
 const handleDelete = async () => {
   uni.showModal({
     title: '提示',
@@ -289,51 +359,47 @@ const handleSave = async () => {
     if (error) throw error;
     // 2. Handle File Upload (if changed)
     if (tempFile.value) {
-        const fileExt = tempFile.value.split('.').pop() || 'png';
-        // MUST use ID as filename for RLS policy check (::uuid)
-        const fileName = `${savedId}.${fileExt}`;
-        const filePath = `${fileName}`; 
-        // Use uni.uploadFile
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session) {
-            throw new Error('Session not found');
-        }
-        const uploadRes = await new Promise<any>((resolve, reject) => {
-            uni.uploadFile({
-                url: `${supabaseUrl}/storage/v1/object/general_stock_out/${fileName}`,
-                filePath: tempFile.value,
-                name: 'file',
-                header: {
-                    'apikey': supabaseAnonKey,
-                    'Authorization': `Bearer ${session.access_token}`,
-                    'x-upsert': 'true', // Critical: Allow overwriting
-                },
-                formData: {
-                    upsert: 'true'
-                },
-                success: (res) => {
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
-                        resolve(res);
-                    } else {
-                        reject(new Error(`Upload failed with status ${res.statusCode}: ${res.data}`));
-                    }
-                },
-                fail: (err) => reject(err)
-            });
-        });
-        
-        console.log('Upload success:', uploadRes);
-        
-        // Update record with file_url
-        const { data: { publicUrl } } = supabase.storage.from('general_stock_out').getPublicUrl(filePath);
-        
-        const { error: updateUrlError } = await supabase
-            .from('general_stock_out')
-            .update({ file_url: publicUrl })
-            .eq('id', savedId);
+        // We know we need to upload
+        // In the previous version we checked if it changed, but here just checking presence is fine
+        // Note: Realistically, if tempFile.value exists AND doesn't start with http, it needs upload
+        if (!tempFile.value.startsWith('http')) {
+            const fileExt = tempFileName.value.split('.').pop() || 'png';
+            const fileName = `${savedId}.${fileExt}`;
             
-        if (updateUrlError) throw updateUrlError;
-        
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+            if (sessionError || !session) {
+                throw new Error('Session not found');
+            }
+            const uploadRes = await new Promise<any>((resolve, reject) => {
+                uni.uploadFile({
+                    url: `${supabaseUrl}/storage/v1/object/general_stock_out/${fileName}`,
+                    filePath: tempFile.value,
+                    name: 'file',
+                    header: {
+                        'apikey': supabaseAnonKey,
+                        'Authorization': `Bearer ${session.access_token}`,
+                        'x-upsert': 'true', // Allow overwriting
+                    },
+                    formData: {
+                        upsert: 'true'
+                    },
+                    success: (res) => {
+                        if (res.statusCode >= 200 && res.statusCode < 300) resolve(res);
+                        else reject(new Error(`Upload failed with status ${res.statusCode}: ${res.data}`));
+                    },
+                    fail: (err) => reject(err)
+                });
+            });
+            
+            // Update record with file_url
+            const { data: { publicUrl } } = supabase.storage.from('general_stock_out').getPublicUrl(fileName);
+            const { error: updateUrlError } = await supabase
+                .from('general_stock_out')
+                .update({ file_url: publicUrl })
+                .eq('id', savedId);
+                
+            if (updateUrlError) throw updateUrlError;
+        }
     } else if (form.value.file_url === '' && !tempFile.value) {
         // User deleted the image
          const { error: updateUrlError } = await supabase
@@ -344,31 +410,114 @@ const handleSave = async () => {
     }
     loading.value = false;
     uni.showToast({ title: '保存成功', icon: 'success' });
-    setTimeout(() => {
-      uni.navigateBack();
-    }, 1500);
+    
+    if (isStockManagedManufacturer.value) {
+         promptReceiptGeneration(savedId);
+    } else {
+         setTimeout(() => { uni.navigateBack(); }, 1500);
+    }
+    
   } catch (err: any) {
       console.error('Save error:', err);
       loading.value = false;
       return uni.showToast({ title: '保存失败: ' + (err.message || '未知错误'), icon: 'none' });
   }
 };
-// ... exist ...
-const tempFile = ref('');
-const chooseImage = () => {
-    uni.chooseImage({
-        count: 1,
+
+const promptReceiptGeneration = (id: string) => {
+    generatedReceiptId.value = id;
+    showReceiptPrompt.value = true;
+};
+
+const generateReceipt = () => {
+    if (!form.value.id) return;
+    uni.navigateTo({ url: `/pages/receipt/stock-slip?mode=general_out&id=${form.value.id}` });
+};
+
+const chooseAttachment = () => {
+    uni.showActionSheet({
+        itemList: ['拍照或从相册选择图片', '从微信聊天选择文件'],
         success: (res) => {
-            tempFile.value = res.tempFilePaths[0];
+            if (res.tapIndex === 0) {
+                uni.chooseImage({
+                    count: 1,
+                    success: (res) => {
+                        tempFile.value = res.tempFilePaths[0];
+                        tempFileName.value = 'image.jpg';
+                    }
+                });
+            } else if (res.tapIndex === 1) {
+                uni.chooseMessageFile({
+                     count: 1,
+                     type: 'file',
+                     extension: ['.pdf', '.xls', '.xlsx', '.jpg', '.png', '.jpeg'],
+                     success: (res) => {
+                         const file = res.tempFiles[0];
+                         tempFile.value = file.path;
+                         tempFileName.value = file.name;
+                     }
+                });
+            }
         }
     });
 };
-const deleteImage = () => {
+
+const deleteAttachment = () => {
     tempFile.value = '';
+    tempFileName.value = '';
     form.value.file_url = '';
 };
-// ... in loadData ...
-// form.value.file_url = data.file_url || '';
+
+const isImage = (url: string) => {
+    if (!url) return false;
+    const lowerUrl = url.toLowerCase();
+    return lowerUrl.includes('.jpg') || lowerUrl.includes('.jpeg') || lowerUrl.includes('.png');
+};
+
+const previewAttachment = () => {
+    const url = tempFile.value || form.value.file_url;
+    if (!url) return;
+    
+    if (isImage(url)) {
+        uni.previewImage({ urls: [url], current: url });
+    } else {
+        uni.showLoading({ title: '正在打开文档' });
+        uni.downloadFile({
+            url: url,
+            success: (res) => {
+                if (res.statusCode === 200) {
+                    uni.openDocument({
+                        filePath: res.tempFilePath,
+                        success: () => uni.hideLoading(),
+                        fail: () => {
+                            uni.hideLoading();
+                            uni.showToast({ title: '不支持打开此类文件', icon: 'none' });
+                        }
+                    });
+                } else {
+                    uni.hideLoading();
+                    uni.showToast({ title: '下载失败', icon: 'none' });
+                }
+            },
+            fail: () => {
+                uni.hideLoading();
+                uni.showToast({ title: '下载失败', icon: 'none' });
+            }
+        });
+    }
+};
+
+const closeReceiptPrompt = () => {
+    showReceiptPrompt.value = false;
+    uni.navigateBack();
+};
+
+const generateReceiptFromPrompt = () => {
+    showReceiptPrompt.value = false;
+    uni.navigateTo({
+        url: `/pages/receipt/stock-slip?mode=general_out&id=${generatedReceiptId.value}`
+    });
+};
 </script>
 <style lang="scss">
 .container {
@@ -451,76 +600,153 @@ const deleteImage = () => {
 }
 .btn-save {
   flex: 2;
-  background-color: #6739b6;
+  background: linear-gradient(135deg, #6739b6, #855bc9);
   color: #fff;
   border-radius: 25px;
   height: 46px;
   line-height: 46px;
   font-size: 16px;
   
+  &::after { border: none; }
+  
   &:active {
     opacity: 0.9;
   }
 }
-.upload-box {
-    margin-top: 10px;
-}
-.upload-btn {
-    width: 100px;
-    height: 100px;
-    background-color: #f9f9f9;
-    border: 1px dashed #ccc;
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+.btn-receipt {
+    flex: 2;
+    background-color: #fff;
+    color: #6739b6;
+    border: 1px solid #6739b6;
+    border-radius: 25px;
+    height: 46px;
+    line-height: 44px;
+    font-size: 16px;
+    padding: 0;
     
-    .plus {
-        font-size: 30px;
-        color: #999;
-        font-weight: 300;
-        margin-bottom: 5px;
-    }
-    
-    .text {
-        font-size: 12px;
-        color: #999;
-    }
+    &::after { border: none; }
     
     &:active {
-        background-color: #f0f0f0;
+      background-color: #f9f9f9;
     }
 }
-.preview-box {
-    position: relative;
-    width: 100px;
-    height: 100px;
-    
-    .preview-img {
-        width: 100%;
-        height: 100%;
-        border-radius: 6px;
-    }
-    
-    .delete-icon {
-        position: absolute;
-        top: -8px;
-        right: -8px;
-        width: 20px;
-        height: 20px;
-        background-color: rgba(0,0,0,0.5);
-        color: #fff;
-        border-radius: 50%;
-        text-align: center;
-        line-height: 18px;
+/* 附件区域样式 */
+.attachment-section {
+  padding: 16px 0;
+  .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      .title {
+        display: flex;
+        align-items: center;
         font-size: 14px;
-        z-index: 10;
-    }
+        color: #333;
+        .blue-bar {
+          /* width: 4px; */
+          /* height: 16px; */
+          /* background-color: #6739b6; */
+          /* border-radius: 2px; */
+          /* margin-right: 8px; */
+        }
+      }
+  }
+  
+  .upload-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+  }
+  
+  .upload-btn {
+      width: 100px;
+      height: 100px;
+      background-color: #f8f9fc;
+      border: 1px dashed #dcdfe6;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      .icon-plus {
+          font-size: 28px;
+          color: #909399;
+          margin-bottom: 4px;
+      }
+      .upload-text {
+          font-size: 12px;
+          color: #909399;
+      }
+  }
+
+  .file-preview {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      border-radius: 8px;
+      border: 1px solid #ebeef5;
+      overflow: hidden;
+      
+      .file-info {
+           width: 100%;
+           height: 100%;
+           display: flex;
+           justify-content: center;
+           align-items: center;
+           background-color: #fafafa;
+           
+           .preview-img {
+               width: 100%;
+               height: 100%;
+           }
+           
+           .document-icon {
+               display: flex;
+               flex-direction: column;
+               align-items: center;
+               justify-content: center;
+               padding: 8px;
+               
+               .icon-file {
+                   font-size: 32px;
+                   margin-bottom: 8px;
+               }
+               
+               .file-name {
+                   font-size: 10px;
+                   color: #606266;
+                   text-align: center;
+                   word-break: break-all;
+                   display: -webkit-box;
+                   -webkit-box-orient: vertical;
+                   -webkit-line-clamp: 2;
+                   overflow: hidden;
+               }
+           }
+      }
+      
+      .delete-btn {
+          position: absolute;
+          top: 0;
+          right: 0;
+          width: 20px;
+          height: 20px;
+          background-color: rgba(245, 108, 108, 0.9);
+          border-bottom-left-radius: 8px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 10;
+          
+          text {
+              color: #fff;
+              font-size: 14px;
+              line-height: 1;
+              font-weight: bold;
+          }
+      }
+  }
 }
-.empty-text {
-    font-size: 14px;
-    color: #999;
-    padding: 10px 0;
-}
+
 </style>

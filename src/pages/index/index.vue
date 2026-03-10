@@ -5,9 +5,10 @@
       <view class="title-bar">
         <text class="app-title">工作台</text>
       </view>
-      <view class="user-info" v-if="userInfo">
-        <text class="greeting">你好，{{ userInfo.name }}</text>
-        <text class="role-badge">{{ userInfo.role_name }}</text>
+      <view class="user-info">
+        <text class="greeting">你好，{{ userInfo ? userInfo.name : '访客' }}</text>
+        <text class="role-badge" v-if="userInfo">{{ userInfo.role_name }}</text>
+        <text class="role-badge" v-else @click="navToLogin">点击登录</text>
       </view>
     </view>
 
@@ -15,30 +16,30 @@
     <view class="status-card">
         <block v-if="isAgent || isAdmin">
             <view class="status-item" @click="navTo('/pages/statement/list?status=confirmed')">
-                <text class="count">{{ stats.pendingConfirm || 0 }}</text>
+                <text class="count">{{ userInfo ? (stats.pendingConfirm || 0) : '-' }}</text>
                 <text class="label">待确认</text>
             </view>
             <view class="status-item" @click="navTo('/pages/statement/list?status=completed')">
-                <text class="count">{{ stats.pendingComplete || 0 }}</text>
+                <text class="count">{{ userInfo ? (stats.pendingComplete || 0) : '-' }}</text>
                 <text class="label">待完成</text>
             </view>
         </block>
         <block v-if="isManufacturer || isAdmin">
              <view class="status-item" @click="navTo('/pages/stock/dashboard')">
-                <text class="count warning">{{ stats.stockAlert || 0 }}</text>
+                <text class="count warning">{{ userInfo ? (stats.stockAlert || 0) : '-' }}</text>
                 <text class="label">库存预警</text>
              </view>
         </block>
         <!-- 通用 -->
         <view class="status-item" @click="navToTodo">
-            <text class="count">{{ stats.todoCount || 0 }}</text>
+            <text class="count">{{ userInfo ? (stats.todoCount || 0) : '-' }}</text>
             <text class="label">我的待办</text>
         </view>
     </view>
 
     <!-- 待办事项 -->
     <view class="section-title">最近待办</view>
-    <view class="todo-list">
+    <view class="todo-list" v-if="userInfo">
         <view class="todo-item" v-for="(item, index) in todoList" :key="index" @click="handleTodo(item)">
             <view class="todo-left">
                 <text class="todo-title">{{ item.todo_title }}</text>
@@ -50,6 +51,11 @@
         </view>
         <view v-if="todoList.length === 0" class="empty-tip">
             <text>暂无待办事项</text>
+        </view>
+    </view>
+    <view class="todo-list" v-else>
+        <view class="empty-tip" @click="navToLogin">
+            <text>登录后查看待办事项</text>
         </view>
     </view>
 
@@ -79,8 +85,11 @@ onShow(async () => {
     uni.showLoading({ title: '加载中...', mask: true });
     try {
         await loadUser();
-        await loadStats();
-        await loadTodos();
+        // 只有登录后才加载详细数据
+        if (userInfo.value) {
+            await loadStats();
+            await loadTodos();
+        }
     } finally {
         uni.hideLoading();
     }
@@ -94,17 +103,13 @@ const loadUser = async () => {
         try {
             user = await refreshUserPermissions();
         } catch (e) {
-            // 未登录，跳转登录
-            uni.reLaunch({ url: '/pages/login/login' });
+            // 未登录，不要强制跳转，保持 userInfo 为 null 即可
+            console.log('User not logged in, rendering guest mode.');
+            userInfo.value = null;
             return;
         }
     }
-    userInfo.value = user;
-    
-    // 如果是 H5 Mock 模式可能没有 refreshUserPermissions 的有效返回，需防御
-    if(!userInfo.value) {
-         uni.reLaunch({ url: '/pages/login/login' });
-    }
+    userInfo.value = user || null;
 };
 
 const loadStats = async () => {
@@ -131,6 +136,7 @@ const loadStats = async () => {
 };
 
 const loadTodos = async () => {
+    if (!userInfo.value) return;
     const { data, error } = await supabase
         .from('todo')
         .select('*')
@@ -143,11 +149,21 @@ const loadTodos = async () => {
     }
 };
 
+const navToLogin = () => {
+    uni.navigateTo({ url: '/pages/login/login' });
+};
+
 const navTo = (url: string) => {
+    if (!userInfo.value) {
+        return navToLogin();
+    }
     uni.navigateTo({ url });
 };
 
 const navToTodo = () => {
+    if (!userInfo.value) {
+        return navToLogin();
+    }
     // 跳转到待办列表页（需后续实现）
     uni.showToast({ title: '查看所有待办', icon: 'none' });
 };
@@ -175,9 +191,9 @@ const formatDate = (str: string) => {
 }
 
 .header-bg {
-  height: 220px;
+  height: 250px;
   background: linear-gradient(135deg, #6739b6, #8a4fd3);
-  padding: 60px 20px 20px;
+  padding: 85px 20px 20px;
   box-sizing: border-box;
   border-bottom-left-radius: 24px;
   border-bottom-right-radius: 24px;
@@ -192,11 +208,14 @@ const formatDate = (str: string) => {
   }
   
   .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+      
       .greeting {
-          display: block;
           font-size: 24px;
           font-weight: bold;
-          margin-bottom: 5px;
       }
       .role-badge {
           font-size: 12px;

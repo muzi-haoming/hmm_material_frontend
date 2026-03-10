@@ -44,15 +44,17 @@ const fetchData = async () => {
   // Refactored: Query from 'profile' table instead of 'user'
   const { data, error } = await supabase
     .from('profile')
-    .select('*, user_role:role_id(name)')
-    .order('create_time', { ascending: false });
+    .select('*, role:role_id(name)')
+    .order('full_name', { ascending: true });
   
   if (error) {
-    uni.showToast({ title: '加载失败', icon: 'none' });
+    uni.showToast({ title: '加载失败: ' + error.message, icon: 'none' });
+    console.error('Fetch Profiles Error:', error);
   } else {
     list.value = (data || []).map((item: any) => ({
       ...item,
-      role_name: item.user_role?.name
+      name: item.full_name || item.nickname || '未设置姓名',
+      role_name: item.role?.name
     }));
   }
   loading.value = false;

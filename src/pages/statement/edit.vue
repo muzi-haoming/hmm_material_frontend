@@ -38,6 +38,35 @@
           </view>
         </picker>
       </view>
+
+      <!-- 附件上传区域 -->
+      <view class="attachment-section">
+        <view class="section-header">
+          <view class="title">
+            <text class="blue-bar"></text>
+            <text>附件/凭证</text>
+          </view>
+        </view>
+        <view class="upload-container">
+          <view class="upload-btn" @click="chooseAttachment" v-if="!form.file_url && !tempFile">
+            <text class="icon-plus">+</text>
+            <text class="upload-text">添加附件</text>
+          </view>
+          
+          <view class="file-preview" v-if="form.file_url || tempFile">
+             <view class="file-info" @click="previewAttachment">
+                 <image v-if="isImage(form.file_url || tempFile)" :src="tempFile || form.file_url" mode="aspectFill" class="preview-img"></image>
+                 <view v-else class="document-icon">
+                    <text class="icon-file">📄</text>
+                    <text class="file-name">{{ tempFileName || '已上传的文件' }}</text>
+                 </view>
+             </view>
+             <view class="delete-btn" @click.stop="deleteAttachment">
+                 <text>×</text>
+             </view>
+          </view>
+        </view>
+      </view>
     </view>
 
     <view class="footer">
@@ -61,8 +90,12 @@ const form = ref({
   code: '',
   contract_id: '',
   start_time: '',
-  end_time: ''
+  end_time: '',
+  file_url: ''
 });
+
+const tempFile = ref('');
+const tempFileName = ref('');
 
 const contracts = ref<any[]>([]);
 const isEdit = ref(false);
@@ -124,8 +157,15 @@ const loadData = async (id: string) => {
     form.value = {
         ...data,
         start_time: data.start_time.split('T')[0],
-        end_time: data.end_time.split('T')[0]
+        end_time: data.end_time.split('T')[0],
+        file_url: data.file_url || ''
     };
+    
+    if (form.value.file_url) {
+        // 解析出文件名展示
+        const urlParts = form.value.file_url.split('/');
+        tempFileName.value = urlParts[urlParts.length - 1];
+    }
   }
 };
 
@@ -159,16 +199,70 @@ const submit = async () => {
   let targetId = form.value.id;
   let error;
   
-  if (isEdit.value) {
-     const { error: updateError } = await supabase.from('statement').update({
-         start_time: form.value.start_time,
-         end_time: form.value.end_time
-     }).eq('id', targetId);
-     error = updateError;
-  } else {
-     const { data, error: insertError } = await supabase.from('statement').insert(payload).select().single();
-     if (data) targetId = data.id;
-     error = insertError;
+  try {
+      if (isEdit.value) {
+         const { error: updateError } = await supabase.from('statement').update({
+             start_time: form.value.start_time,
+             end_time: form.value.end_time
+         }).eq('id', targetId);
+         error = updateError;
+      } else {
+         const { data, error: insertError } = await supabase.from('statement').insert(payload).select().single();
+         if (data) targetId = data.id;
+         error = insertError;
+      }
+
+      if (error) throw error;
+
+      // 文件上传逻辑合并
+      if (tempFile.value) {
+          if (!tempFile.value.startsWith('http')) {
+              const fileExt = tempFileName.value.split('.').pop() || 'png';
+              const fileName = `${targetId}.${fileExt}`;
+              
+              const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+              if (sessionError || !session) throw new Error('Session not found');
+
+              await new Promise<any>((resolve, reject) => {
+                  uni.uploadFile({
+                      url: `${supabaseUrl}/storage/v1/object/statement/${fileName}`,
+                      filePath: tempFile.value,
+                      name: 'file',
+                      header: {
+                          'apikey': supabaseAnonKey,
+                          'Authorization': `Bearer ${session.access_token}`,
+                          'x-upsert': 'true',
+                      },
+                      formData: { upsert: 'true' },
+                      success: (res) => {
+                          if (res.statusCode >= 200 && res.statusCode < 300) resolve(res);
+                          else reject(new Error(`Upload failed with status ${res.statusCode}: ${res.data}`));
+                      },
+                      fail: (err) => reject(err)
+                  });
+              });
+              
+              const { data: { publicUrl } } = supabase.storage.from('statement').getPublicUrl(fileName);
+              
+              const { error: updateUrlError } = await supabase
+                  .from('statement')
+                  .update({ file_url: publicUrl })
+                  .eq('id', targetId);
+                  
+              if (updateUrlError) throw updateUrlError;
+          }
+      } else if (form.value.file_url === '' && !tempFile.value) {
+           const { error: updateUrlError } = await supabase
+              .from('statement')
+              .update({ file_url: null })
+              .eq('id', targetId);
+           if (updateUrlError) throw updateUrlError;
+      }
+      
+      error = null;
+  } catch(err: any) {
+      error = err;
+      console.error('Save error:', err);
   }
   
   submitting.value = false;
@@ -191,7 +285,13 @@ const handleDelete = async () => {
     success: async (res) => {
       if (res.confirm) {
         submitting.value = true;
+        // 注意：这里需要先删除文件引用的封装函数，但为了简便先直接删除数据再删除文件
         const { error } = await supabase.from('statement').delete().eq('id', form.value.id);
+        if (!error && form.value.file_url) {
+             const urlParts = form.value.file_url.split('/');
+             const fileName = urlParts[urlParts.length - 1];
+             await supabase.storage.from('statement').remove([fileName]);
+        }
         submitting.value = false;
         
         if (error) {
@@ -205,6 +305,79 @@ const handleDelete = async () => {
       }
     }
   });
+};
+
+const chooseAttachment = () => {
+    uni.showActionSheet({
+        itemList: ['拍照或从相册选择图片', '从微信聊天选择文件'],
+        success: (res) => {
+            if (res.tapIndex === 0) {
+                uni.chooseImage({
+                    count: 1,
+                    success: (res) => {
+                        tempFile.value = res.tempFilePaths[0];
+                        tempFileName.value = 'image.jpg';
+                    }
+                });
+            } else if (res.tapIndex === 1) {
+                uni.chooseMessageFile({
+                     count: 1,
+                     type: 'file',
+                     extension: ['.pdf', '.xls', '.xlsx', '.jpg', '.png', '.jpeg'],
+                     success: (res) => {
+                         const file = res.tempFiles[0];
+                         tempFile.value = file.path;
+                         tempFileName.value = file.name;
+                     }
+                });
+            }
+        }
+    });
+};
+
+const deleteAttachment = () => {
+    tempFile.value = '';
+    tempFileName.value = '';
+    form.value.file_url = '';
+};
+
+const isImage = (url: string) => {
+    if (!url) return false;
+    const lowerUrl = url.toLowerCase();
+    return lowerUrl.includes('.jpg') || lowerUrl.includes('.jpeg') || lowerUrl.includes('.png');
+};
+
+const previewAttachment = () => {
+    const url = tempFile.value || form.value.file_url;
+    if (!url) return;
+    
+    if (isImage(url)) {
+        uni.previewImage({ urls: [url], current: url });
+    } else {
+        uni.showLoading({ title: '正在打开文档' });
+        uni.downloadFile({
+            url: url,
+            success: (res) => {
+                if (res.statusCode === 200) {
+                    uni.openDocument({
+                        filePath: res.tempFilePath,
+                        success: () => uni.hideLoading(),
+                        fail: () => {
+                            uni.hideLoading();
+                            uni.showToast({ title: '不支持打开此类文件', icon: 'none' });
+                        }
+                    });
+                } else {
+                    uni.hideLoading();
+                    uni.showToast({ title: '下载失败', icon: 'none' });
+                }
+            },
+            fail: () => {
+                uni.hideLoading();
+                uni.showToast({ title: '下载失败', icon: 'none' });
+            }
+        });
+    }
 };
 </script>
 
@@ -257,6 +430,125 @@ const handleDelete = async () => {
   
   &:active {
     opacity: 0.9;
+  }
+}
+
+/* 附件区域样式 */
+.attachment-section {
+  padding: 16px 0;
+  .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      .title {
+        display: flex;
+        align-items: center;
+        font-size: 14px;
+        color: #333;
+        .blue-bar {
+          /* width: 4px; */
+          /* height: 16px; */
+          /* background-color: #6739b6; */
+          /* border-radius: 2px; */
+          /* margin-right: 8px; */
+        }
+      }
+  }
+  
+  .upload-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+  }
+  
+  .upload-btn {
+      width: 100px;
+      height: 100px;
+      background-color: #f8f9fc;
+      border: 1px dashed #dcdfe6;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      .icon-plus {
+          font-size: 28px;
+          color: #909399;
+          margin-bottom: 4px;
+      }
+      .upload-text {
+          font-size: 12px;
+          color: #909399;
+      }
+  }
+
+  .file-preview {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      border-radius: 8px;
+      border: 1px solid #ebeef5;
+      overflow: hidden;
+      
+      .file-info {
+           width: 100%;
+           height: 100%;
+           display: flex;
+           justify-content: center;
+           align-items: center;
+           background-color: #fafafa;
+           
+           .preview-img {
+               width: 100%;
+               height: 100%;
+           }
+           
+           .document-icon {
+               display: flex;
+               flex-direction: column;
+               align-items: center;
+               justify-content: center;
+               padding: 8px;
+               
+               .icon-file {
+                   font-size: 32px;
+                   margin-bottom: 8px;
+               }
+               
+               .file-name {
+                   font-size: 10px;
+                   color: #606266;
+                   text-align: center;
+                   word-break: break-all;
+                   display: -webkit-box;
+                   -webkit-box-orient: vertical;
+                   -webkit-line-clamp: 2;
+                   overflow: hidden;
+               }
+           }
+      }
+      
+      .delete-btn {
+          position: absolute;
+          top: 0;
+          right: 0;
+          width: 20px;
+          height: 20px;
+          background-color: rgba(245, 108, 108, 0.9);
+          border-bottom-left-radius: 8px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 10;
+          
+          text {
+              color: #fff;
+              font-size: 14px;
+              line-height: 1;
+              font-weight: bold;
+          }
+      }
   }
 }
 </style>

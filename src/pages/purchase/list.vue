@@ -88,6 +88,8 @@ const fetchData = async () => {
   let query = supabase
     .from('general_purchase')
     .select('id, code, quantity, is_confirmed, is_completed, payer:payer_manufacturer_id(name), payee:payee_manufacturer_id(name), material:material_id(name)')
+    .order('is_completed', { ascending: true })
+    .order('is_confirmed', { ascending: true })
     .order('create_time', { ascending: false });
 
   if (keyword.value) {

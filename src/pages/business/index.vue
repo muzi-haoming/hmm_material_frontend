@@ -91,6 +91,11 @@ const canCreate = computed(() => {
 const fetchData = async () => {
     loading.value = true;
     currentUser.value = getCurrentUser();
+    if (!currentUser.value) {
+        contractList.value = [];
+        loading.value = false;
+        return;
+    }
     await fetchContracts();
     loading.value = false;
 };
@@ -154,6 +159,7 @@ const getStatusClass = (item: Contract) => {
 };
 
 const handleSearch = () => {
+  if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
   fetchData();
 };
 
@@ -163,10 +169,12 @@ const clearSearch = () => {
 };
 
 const goAdd = () => {
+    if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
     uni.navigateTo({ url: '/pages/contract/edit' });
 };
 
 const goContractDetail = (id: string) => {
+  if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
   uni.navigateTo({ url: `/pages/contract/detail?id=${id}` });
 };
 

@@ -151,6 +151,7 @@ const editForm = reactive({
 });
 
 const isAdmin = computed(() => {
+    if (!profile.value || !profile.value.id) return false;
     return profile.value?.role_code === 'admin' || profile.value?.is_admin;
 });
 
@@ -169,9 +170,17 @@ const loadData = async () => {
         try {
             user = await refreshUserPermissions();
         } catch (e) {
+            // Guest mode
+            profile.value = {};
             return;
         }
     }
+    
+    if (!user) {
+         profile.value = {};
+         return;
+    }
+
     profile.value = user;
     
     // Fetch detailed profile for editing if needed, but current user info usually suffices for display
@@ -183,10 +192,12 @@ const loadData = async () => {
 };
 
 const navTo = (url: string) => {
+    if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
     uni.navigateTo({ url });
 };
 
 const handleLogout = () => {
+    if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
     uni.showModal({
         content: '确定退出吗？',
         success: async (res) => {
@@ -201,6 +212,7 @@ const handleLogout = () => {
 };
 
 const handleEditProfile = () => {
+    if (!getCurrentUser()) return uni.navigateTo({ url: '/pages/login/login' });
     editForm.name = profile.value.name || profile.value.full_name || '';
     editForm.nickname = profile.value.nickname || '';
     editForm.email = profile.value.email || '';
@@ -227,7 +239,7 @@ const saveProfile = async () => {
         let avatarUrl = profile.value.avatar_url;
         
         // Upload Avatar if changed and is local path
-        if (editForm.avatarUrl && editForm.avatarUrl !== avatarUrl && !editForm.avatarUrl.startsWith('http')) {
+        if (editForm.avatarUrl && editForm.avatarUrl !== avatarUrl) {
              const uploaded = await uploadAvatar(editForm.avatarUrl, profile.value.id);
              if (uploaded) avatarUrl = uploaded;
         } else if (editForm.avatarUrl) {

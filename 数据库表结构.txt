@@ -1411,7 +1411,7 @@ drop table if exists contract_order_stock_out cascade;
 create table contract_order_stock_out (
     id uuid primary key default uuid_generate_v4(),
     code varchar(20) not null unique,
-    creator uuid not null references profile(id) default auth.uid(),
+    creator uuid not null constraint contract_order_stock_out_creator_fkey references profile(id) default auth.uid(),
     modifier uuid not null references profile(id) default auth.uid(),
     create_time timestamptz not null default current_timestamp,
     modify_time timestamptz not null default current_timestamp,
@@ -1499,7 +1499,12 @@ create policy "contract_order_stock_out_update_policy" on contract_order_stock_o
 create policy "contract_order_stock_out_select_policy" on contract_order_stock_out for select to authenticated using (true);
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('contract_order_stock_out', '合同订单出库单', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'contract_order_stock_out', 
+    '合同订单出库单', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
@@ -1509,6 +1514,7 @@ insert into storage.buckets (id, name, public) values ('contract_order_stock_out
 drop policy if exists "contract_order_stock_out_insert_policy" on storage.objects;
 create policy "contract_order_stock_out_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'contract_order_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from contract_order_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -1525,6 +1531,7 @@ create policy "contract_order_stock_out_insert_policy" on storage.objects for in
 drop policy if exists "contract_order_stock_out_delete_policy" on storage.objects;
 create policy "contract_order_stock_out_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'contract_order_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -1539,6 +1546,7 @@ create policy "contract_order_stock_out_delete_policy" on storage.objects for de
 drop policy if exists "contract_order_stock_out_update_policy" on storage.objects;
 create policy "contract_order_stock_out_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'contract_order_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from contract_order_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -1546,7 +1554,9 @@ create policy "contract_order_stock_out_update_policy" on storage.objects for up
         from contract_order co join contract_order_stock_out coso on co.id = coso.contract_order_id
         where coso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "contract_order_stock_out_select_policy" on storage.objects;
@@ -1570,6 +1580,7 @@ create table contract_order_stock_in (
     contract_order_id uuid not null references contract_order(id),
     manufacturer_id uuid not null references manufacturer(id),
     quantity decimal(19,4) not null,
+    inbound_date date not null,
     file_url text
 );
 -- 增加注释
@@ -1583,6 +1594,7 @@ comment on column contract_order_stock_in.modify_time is '修改时间';
 comment on column contract_order_stock_in.contract_order_id is '合同订单ID';
 comment on column contract_order_stock_in.manufacturer_id is '出库厂家ID';
 comment on column contract_order_stock_in.quantity is '数量';
+comment on column contract_order_stock_in.inbound_date is '入库日期';
 comment on column contract_order_stock_in.file_url is '文件URL';
 -----------------------------------
 -- 私用触发器函数
@@ -1668,7 +1680,12 @@ create policy "contract_order_stock_in_update_policy" on contract_order_stock_in
 create policy "contract_order_stock_in_select_policy" on contract_order_stock_in for select to authenticated using (true);
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('contract_order_stock_in', '合同订单入库单', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'contract_order_stock_in', 
+    '合同订单入库单', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
@@ -1678,6 +1695,7 @@ insert into storage.buckets (id, name, public) values ('contract_order_stock_in'
 drop policy if exists "contract_order_stock_in_insert_policy" on storage.objects;
 create policy "contract_order_stock_in_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'contract_order_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from contract_order_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -1694,6 +1712,7 @@ create policy "contract_order_stock_in_insert_policy" on storage.objects for ins
 drop policy if exists "contract_order_stock_in_delete_policy" on storage.objects;
 create policy "contract_order_stock_in_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'contract_order_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -1708,6 +1727,7 @@ create policy "contract_order_stock_in_delete_policy" on storage.objects for del
 drop policy if exists "contract_order_stock_in_update_policy" on storage.objects;
 create policy "contract_order_stock_in_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'contract_order_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from contract_order_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -1715,7 +1735,9 @@ create policy "contract_order_stock_in_update_policy" on storage.objects for upd
         from contract_order co join contract_order_stock_in cosi on co.id = cosi.contract_order_id
         where cosi.id = regexp_replace(name, '\.[^.]+$', '')::uuid and co.is_confirmed = true and co.is_completed = false
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "contract_order_stock_in_select_policy" on storage.objects;
@@ -1961,7 +1983,7 @@ drop table if exists general_stock_out cascade;
 create table general_stock_out (
     id uuid primary key default uuid_generate_v4(),
     code varchar(20) not null unique,
-    creator uuid not null references profile(id) default auth.uid(),
+    creator uuid not null constraint general_stock_out_creator_fkey references profile(id) default auth.uid(),
     modifier uuid not null references profile(id) default auth.uid(),
     create_time timestamptz not null default current_timestamp,
     modify_time timestamptz not null default current_timestamp,
@@ -2059,7 +2081,12 @@ create policy "general_stock_out_update_policy" on general_stock_out for update 
 create policy "general_stock_out_select_policy" on general_stock_out for select to authenticated using (true);
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('general_stock_out', '通用出库单', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'general_stock_out', 
+    '通用出库单', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
@@ -2069,6 +2096,7 @@ insert into storage.buckets (id, name, public) values ('general_stock_out', '通
 drop policy if exists "general_stock_out_insert_policy" on storage.objects;
 create policy "general_stock_out_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'general_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from general_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2085,6 +2113,7 @@ create policy "general_stock_out_insert_policy" on storage.objects for insert to
 drop policy if exists "general_stock_out_delete_policy" on storage.objects;
 create policy "general_stock_out_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'general_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -2099,6 +2128,7 @@ create policy "general_stock_out_delete_policy" on storage.objects for delete to
 drop policy if exists "general_stock_out_update_policy" on storage.objects;
 create policy "general_stock_out_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'general_stock_out'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from general_stock_out c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2106,7 +2136,9 @@ create policy "general_stock_out_update_policy" on storage.objects for update to
         from general_purchase gp join general_stock_out gso on gp.id = gso.general_purchase_id
         where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "general_stock_out_select_policy" on storage.objects;
@@ -2123,7 +2155,7 @@ drop table if exists general_stock_in cascade;
 create table general_stock_in (
     id uuid primary key default uuid_generate_v4(),
     code varchar(20) not null unique,
-    creator uuid not null references profile(id) default auth.uid(),
+    creator uuid not null constraint general_stock_in_creator_fkey references profile(id) default auth.uid(),
     modifier uuid not null references profile(id) default auth.uid(),
     create_time timestamptz not null default current_timestamp,
     modify_time timestamptz not null default current_timestamp,
@@ -2221,7 +2253,12 @@ create policy "general_stock_in_update_policy" on general_stock_in for update to
 create policy "general_stock_in_select_policy" on general_stock_in for select to authenticated using (true);
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('general_stock_in', '通用入库单', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'general_stock_in', 
+    '通用入库单', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
@@ -2231,6 +2268,7 @@ insert into storage.buckets (id, name, public) values ('general_stock_in', '通�
 drop policy if exists "general_stock_in_insert_policy" on storage.objects;
 create policy "general_stock_in_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'general_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from general_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2247,6 +2285,7 @@ create policy "general_stock_in_insert_policy" on storage.objects for insert to 
 drop policy if exists "general_stock_in_delete_policy" on storage.objects;
 create policy "general_stock_in_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'general_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -2261,6 +2300,7 @@ create policy "general_stock_in_delete_policy" on storage.objects for delete to 
 drop policy if exists "general_stock_in_update_policy" on storage.objects;
 create policy "general_stock_in_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'general_stock_in'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from general_stock_in c where c.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2268,7 +2308,9 @@ create policy "general_stock_in_update_policy" on storage.objects for update to 
         from general_purchase gp join general_stock_in gso on gp.id = gso.general_purchase_id
         where gso.id = regexp_replace(name, '\.[^.]+$', '')::uuid and gp.is_confirmed = true and gp.is_completed = false
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "general_stock_in_select_policy" on storage.objects;
@@ -2316,7 +2358,7 @@ comment on column "statement".is_completed is '是否完成';
 -- 绑定触发器
 create trigger trg_01_statement_set_modifier before update on "statement" for each row execute function set_modifier();
 create trigger trg_02_statement_set_modify_time before update on "statement" for each row execute function set_modify_time();
-create trigger trg_03_statement_check_bill_status_rules before update on "statement" for each row execute function check_bill_status_rules();
+create trigger trg_03_statement_check_bill_status_rules before update on "statement" for each row execute function check_bill_status_rules("statement_material_detail", "statement_other_expenses_detail");
 -----------------------------------
 -- 设置行级安全策略 (RLS)
 alter table "statement" enable row level security;
@@ -2400,7 +2442,12 @@ create policy "statement_select_policy" on "statement" for select to authenticat
 );
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('statement', '对账单', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'statement', 
+    '对账单', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
@@ -2411,6 +2458,7 @@ insert into storage.buckets (id, name, public) values ('statement', '对账单',
 drop policy if exists "statement_insert_policy" on storage.objects;
 create policy "statement_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'statement'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2430,6 +2478,7 @@ create policy "statement_insert_policy" on storage.objects for insert to authent
 drop policy if exists "statement_delete_policy" on storage.objects;
 create policy "statement_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'statement'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -2445,6 +2494,7 @@ create policy "statement_delete_policy" on storage.objects for delete to authent
 drop policy if exists "statement_update_policy" on storage.objects;
 create policy "statement_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'statement'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from "statement" s where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and exists (
@@ -2454,7 +2504,9 @@ create policy "statement_update_policy" on storage.objects for update to authent
         from contract c join "statement" s on c.id = s.contract_id
         where s.id = regexp_replace(name, '\.[^.]+$', '')::uuid and c.is_confirmed = true and c.is_completed = false
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "statement_select_policy" on storage.objects;
@@ -2921,15 +2973,21 @@ create policy "invoice_select_policy" on invoice for select to authenticated usi
 );
 -----------------------------------
 -- 存储桶
-insert into storage.buckets (id, name, public) values ('invoice', '发票', true) on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, allowed_mime_types) values (
+    'invoice', 
+    '发票', 
+    true, 
+    array['image/jpeg', 'image/png', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+) on conflict (id) do update set allowed_mime_types = excluded.allowed_mime_types;
 -- 设置 policy
 -- insert policy
 --   check:
 --     1. 操作的必须是 invoice
---     2. 路径必须是 invoice/单据id.后缀
+--     2. 路径必须是 invoice/单据id.后缀 (仅支持 jpg/jpeg/png/pdf/xls/xlsx)
 drop policy if exists "invoice_insert_policy" on storage.objects;
 create policy "invoice_insert_policy" on storage.objects for insert to authenticated with check (
     bucket_id = 'invoice'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from invoice i where i.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     )
@@ -2942,6 +3000,7 @@ create policy "invoice_insert_policy" on storage.objects for insert to authentic
 drop policy if exists "invoice_delete_policy" on storage.objects;
 create policy "invoice_delete_policy" on storage.objects for delete to authenticated using (
     bucket_id = 'invoice'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and (
         is_admin()
         or owner = auth.uid()
@@ -2956,12 +3015,15 @@ create policy "invoice_delete_policy" on storage.objects for delete to authentic
 drop policy if exists "invoice_update_policy" on storage.objects;
 create policy "invoice_update_policy" on storage.objects for update to authenticated using (
     bucket_id = 'invoice'
+    and name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
     and exists (
         select 1 from invoice i where i.id = regexp_replace(name, '\.[^.]+$', '')::uuid
     ) and not exists (
         select 1 from statement_invoice_rela sir where sir.invoice_id = regexp_replace(name, '\.[^.]+$', '')::uuid
     )
-) with check (true);
+) with check (
+    name ~* '^[0-9a-f\-]{36}\.(jpg|jpeg|png|pdf|xls|xlsx)$'
+);
 -- select policy:
 --   using: true
 drop policy if exists "invoice_select_policy" on storage.objects;

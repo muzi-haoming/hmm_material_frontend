@@ -13,7 +13,11 @@
                <text class="action-btn text-success" @click="confirmStatement">确认</text>
            </template>
            <template v-else-if="!isCompleted">
+               <text class="action-btn text-warning" @click="unconfirmStatement">取消确认</text>
                <text class="action-btn text-danger" @click="completeStatement">完成</text>
+           </template>
+           <template v-else>
+               <text class="action-btn text-warning" @click="uncompleteStatement">取消完成</text>
            </template>
         </view>
       </view>
@@ -54,7 +58,9 @@
           </view>
           <view class="item-side">
             <text class="item-amount">¥{{ item.amount }}</text>
-            <text class="iconfont icon-delete" v-if="!isConfirmed" @click="deleteMaterial(item.id)"></text>
+            <view class="item-actions" v-if="!isConfirmed">
+              <text class="action-btn text-danger" @click.stop="deleteMaterial(item.id)">删除</text>
+            </view>
           </view>
         </view>
         <view v-if="materials.length === 0" class="empty-state">暂无物资</view>
@@ -66,11 +72,13 @@
        <view class="list">
         <view class="list-item" v-for="(item, index) in expenses" :key="item.id">
           <view class="item-main">
-            <text class="item-title">{{ item.item?.name || '未知费用' }}</text>
+            <view class="item-title">{{ item.item?.name || '未知费用' }}</view>
           </view>
           <view class="item-side">
             <text class="item-amount">¥{{ item.amount }}</text>
-            <text class="iconfont icon-delete" v-if="!isConfirmed" @click="deleteExpense(item.id)"></text>
+            <view class="item-actions" v-if="!isConfirmed">
+              <text class="action-btn text-danger" @click.stop="deleteExpense(item.id)">删除</text>
+            </view>
           </view>
         </view>
         <view v-if="expenses.length === 0" class="empty-state">暂无费用</view>
@@ -82,12 +90,15 @@
        <view class="list">
         <view class="list-item" v-for="(item, index) in invoices" :key="item.id">
           <view class="item-main">
-            <text class="item-title">{{ item.invoice?.invoice_title }}</text>
-            <text class="item-sub">{{ item.invoice?.invoice_no }}</text>
+            <view class="item-title">{{ item.invoice?.invoice_title }}</view>
+            <view class="item-sub">{{ item.invoice?.invoice_no }}</view>
           </view>
           <view class="item-side">
             <text class="item-amount">¥{{ item.invoice?.amount }}</text>
-            <text class="iconfont icon-delete" v-if="!isConfirmed" @click="unlinkInvoice(item.id)"></text>
+            <view class="item-actions">
+              <text class="action-btn text-warning" v-if="isConfirmed && !isCompleted" @click.stop="unlinkInvoice(item.id)">取消关联</text>
+              <text class="action-btn text-primary" @click.stop="goInvoiceDetail(item.invoice_id)">详情</text>
+            </view>
           </view>
         </view>
         <view v-if="invoices.length === 0" class="empty-state">暂无关联发票</view>
@@ -132,7 +143,7 @@
     </view>
 
     <!-- Floating Action Button -->
-    <view class="fab-add" v-if="!isConfirmed" @click="handleAddClick">
+    <view class="fab-add" v-if="(currentTab !== 2 && !isConfirmed) || (currentTab === 2 && isConfirmed && !isCompleted)" @click="handleAddClick">
       <text class="plus">+</text>
     </view>
 
@@ -175,13 +186,13 @@ const loadData = async () => {
     const { data } = await supabase.from('statement').select('*, contract:contract_id(name)').eq('id', statementId.value).single();
     if (data) statement.value = data;
 
-    const { data: mats } = await supabase.from('statement_material_detail').select('*, product:product_id(name)').eq('statement_id', statementId.value);
+    const { data: mats } = await supabase.from('statement_material_detail').select('*, product:product_id(name)').eq('statement_id', statementId.value).order('create_time', { ascending: true });
     if (mats) materials.value = mats;
 
-    const { data: exps } = await supabase.from('statement_other_expenses_detail').select('*, item:item_id(name)').eq('statement_id', statementId.value);
+    const { data: exps } = await supabase.from('statement_other_expenses_detail').select('*, item:item_id(name)').eq('statement_id', statementId.value).order('create_time', { ascending: true });
     if (exps) expenses.value = exps;
     
-    const { data: invs } = await supabase.from('statement_invoice_rela').select('*, invoice:invoice_id(invoice_no, invoice_title, amount)').eq('statement_id', statementId.value);
+    const { data: invs } = await supabase.from('statement_invoice_rela').select('*, invoice:invoice_id(invoice_no, invoice_title, amount)').eq('statement_id', statementId.value).order('create_time', { ascending: true });
     if (invs) invoices.value = invs;
     
     uni.hideLoading();
@@ -251,8 +262,21 @@ const saveMaterial = async () => {
     else { closeMaterialModal(); loadData(); }
 };
 const deleteMaterial = async (id: string) => {
-    const { error } = await supabase.from('statement_material_detail').delete().eq('id', id);
-    if (!error) loadData();
+    uni.showModal({
+        title: '提示',
+        content: '确定要删除该物资明细吗？',
+        success: async (res) => {
+            if (res.confirm) {
+                const { error } = await supabase.from('statement_material_detail').delete().eq('id', id);
+                if (!error) {
+                    uni.showToast({ title: '已删除', icon: 'success' });
+                    loadData();
+                } else {
+                    uni.showToast({ title: '删除事败: ' + error.message, icon: 'none' });
+                }
+            }
+        }
+    });
 };
 
 // Expense
@@ -273,46 +297,128 @@ const saveExpense = async () => {
     else { closeExpenseModal(); loadData(); }
 };
 const deleteExpense = async (id: string) => {
-    const { error } = await supabase.from('statement_other_expenses_detail').delete().eq('id', id);
-    if (!error) loadData();
+    uni.showModal({
+        title: '提示',
+        content: '确定要删除该费用项吗？',
+        success: async (res) => {
+            if (res.confirm) {
+                const { error } = await supabase.from('statement_other_expenses_detail').delete().eq('id', id);
+                if (!error) {
+                    uni.showToast({ title: '已删除', icon: 'success' });
+                    loadData();
+                } else {
+                    uni.showToast({ title: '删除失败: ' + error.message, icon: 'none' });
+                }
+            }
+        }
+    });
 };
 
 // Invoice
 const openLinkInvoice = () => {
-    // Navigate to a selection page or show a picker. 
-    // Since Invoice list can be long, maybe navigate to a selector page?
-    // Or simplified: show invoice list page with select mode?
-    // For now, let's just toast "请前往发票列表关联" or implement a simple picker if list is short.
-    // Better: Navigate to `invoice/list?mode=select&statementId=...`
-    // But I haven't implemented select mode in invoice list.
-    // I'll skip implementing complex Invoice Selector for this turn to save space.
-    uni.showToast({ title: '暂未实现关联发票选择', icon: 'none' });
+    uni.$once('invoiceSelected', async (invoice: any) => {
+        // 检查是否已经关联过该发票
+        if (invoices.value.some(inv => inv.invoice_id === invoice.id)) {
+            return uni.showToast({ title: '已关联该发票', icon: 'none' });
+        }
+        
+        uni.showLoading({ title: '关联中...' });
+        const { error } = await supabase.from('statement_invoice_rela').insert({
+            statement_id: statementId.value,
+            invoice_id: invoice.id
+        });
+        uni.hideLoading();
+        
+        if (error) {
+            if (error.code === '23505') {
+                 uni.showToast({ title: '发票已关联', icon: 'none' });
+            } else {
+                 uni.showToast({ title: '关联失败: ' + error.message, icon: 'none' });
+            }
+        } else {
+            uni.showToast({ title: '关联成功', icon: 'success' });
+            loadData();
+        }
+    });
+
+    uni.navigateTo({ url: '/pages/invoice/list?mode=select' });
 };
 const unlinkInvoice = async (id: string) => {
-    const { error } = await supabase.from('statement_invoice_rela').delete().eq('id', id);
-    if (!error) loadData();
+    uni.showModal({
+        title: '提示',
+        content: '确定要取消关联此发票吗？',
+        success: async (res) => {
+            if (res.confirm) {
+                const { error } = await supabase.from('statement_invoice_rela').delete().eq('id', id);
+                if (!error) {
+                    uni.showToast({ title: '已取消关联', icon: 'success' });
+                    loadData();
+                } else {
+                    uni.showToast({ title: '取消关联失败: ' + error.message, icon: 'none' });
+                }
+            }
+        }
+    });
+};
+const goInvoiceDetail = (invoiceId: string) => {
+    if (invoiceId) {
+        uni.navigateTo({ url: `/pages/invoice/edit?id=${invoiceId}` });
+    }
 };
 
-// Actions
 const confirmStatement = async () => {
-    const { error } = await supabase.from('statement').update({ is_confirmed: true }).eq('id', statementId.value);
-    if (!error) loadData();
-    else uni.showToast({ title: '确认失败', icon: 'none' });
+    uni.navigateTo({ url: `/pages/statement/compare?id=${statementId.value}` });
+};
+const unconfirmStatement = async () => {
+    uni.showModal({
+        title: '提示',
+        content: '确定要取消确认吗？',
+        success: async (res) => {
+            if (res.confirm) {
+                const { error } = await supabase.from('statement').update({ is_confirmed: false }).eq('id', statementId.value);
+                if (!error) {
+                    uni.showToast({ title: '已取消确认', icon: 'success' });
+                    loadData();
+                } else {
+                    const errMsg = (error as any).data?.message || error?.message || (error as any)?.details || (error as any)?.msg || '未知错误';
+                    uni.showToast({ title: '取消确认失败: ' + errMsg, icon: 'none' });
+                }
+            }
+        }
+    });
 };
 const completeStatement = async () => {
     const { error } = await supabase.from('statement').update({ is_completed: true }).eq('id', statementId.value);
     if (!error) loadData();
     else uni.showToast({ title: '完成失败', icon: 'none' });
 };
+const uncompleteStatement = async () => {
+    uni.showModal({
+        title: '提示',
+        content: '确定要取消完成吗？',
+        success: async (res) => {
+            if (res.confirm) {
+                const { error } = await supabase.from('statement').update({ is_completed: false }).eq('id', statementId.value);
+                if (!error) {
+                    uni.showToast({ title: '已取消完成', icon: 'success' });
+                    loadData();
+                } else {
+                    const errMsg = (error as any).data?.message || error?.message || (error as any)?.details || (error as any)?.msg || '未知错误';
+                    uni.showToast({ title: '取消完成失败: ' + errMsg, icon: 'none' });
+                }
+            }
+        }
+    });
+};
 </script>
 
 <style lang="scss">
 .container { min-height: 100vh; background: #f5f5f5; padding-bottom: 80px; }
 .header-card { background: #fff; padding: 20px; margin-bottom: 10px; }
-.header-top { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center; }
-.title-row { flex: 1; display: flex; align-items: center; gap: 10px; }
-.title { font-size: 18px; font-weight: bold; }
-.card-actions { display: flex; gap: 15px; align-items: center; }
+.header-top { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+.title-row { flex: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 60%; }
+.title { font-size: 18px; font-weight: bold; word-break: break-all; line-height: 1.4; }
+.card-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-shrink: 0; }
 .action-btn { font-size: 14px; font-weight: 500; cursor: pointer; &:active { opacity: 0.7; } }
 .text-primary { color: #6739b6; }
 .text-warning { color: #fa8c16; }
@@ -330,11 +436,13 @@ const completeStatement = async () => {
 
 .tab-content { padding: 15px; }
 
-.list-item { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-.item-title { font-size: 15px; font-weight: 500; color: #333; }
-.item-sub { font-size: 12px; color: #999; margin-top: 4px; }
+.list-item { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; }
+.item-main { flex: 1; margin-right: 15px; }
+.item-title { font-size: 15px; font-weight: 500; color: #333; word-break: break-all; line-height: 1.4; }
+.item-sub { font-size: 12px; color: #999; margin-top: 4px; word-break: break-all; line-height: 1.4; }
 .item-side { text-align: right; }
 .item-amount { font-size: 15px; font-weight: bold; color: #333; display: block; margin-bottom: 5px; }
+.item-actions { display: flex; justify-content: flex-end; align-items: center; gap: 15px; margin-top: 8px; }
 .icon-delete { color: #ff4d4f; font-size: 16px; }
 
 .detail-row {

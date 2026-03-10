@@ -87,12 +87,12 @@ onShow(() => {
 });
 
 const loadProducts = async () => {
-    const { data } = await supabase.from('product').select('id, name, code, unit').order('create_time');
+    const { data } = await supabase.from('product').select('id, name, code, unit').order('name');
     if (data) productList.value = data;
 };
 
 const loadMaterials = async () => {
-    const { data } = await supabase.from('material').select('id, name, code, unit, spec').order('create_time');
+    const { data } = await supabase.from('material').select('id, name, code, unit, spec').order('name');
     if (data) materialList.value = data;
 };
 

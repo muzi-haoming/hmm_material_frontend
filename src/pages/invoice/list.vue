@@ -17,7 +17,7 @@
 
     <!-- Invoice List -->
     <view class="list-container">
-      <view class="list-item" v-for="item in list" :key="item.id" @click="goDetail(item.id)">
+      <view class="list-item" v-for="item in list" :key="item.id" @click="onItemClick(item)">
         <view class="item-header">
           <text class="item-title">{{ item.invoice_title }}</text>
           <text class="item-amount">¥{{ item.amount }}</text>
@@ -45,7 +45,7 @@
     </view>
 
     <!-- FAB Add -->
-    <view class="fab-add" @click="goAdd">
+    <view class="fab-add" @click="goAdd" v-if="!isSelectMode">
       <text class="iconfont icon-add">+</text>
     </view>
   </view>
@@ -54,11 +54,19 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { supabase } from '@/utils/supabase';
-import { onShow } from '@dcloudio/uni-app';
+import { onLoad, onShow } from '@dcloudio/uni-app';
 
 const list = ref<any[]>([]);
 const keyword = ref('');
 const loading = ref(false);
+const isSelectMode = ref(false);
+
+onLoad((options: any) => {
+  if (options.mode === 'select') {
+    isSelectMode.value = true;
+    uni.setNavigationBarTitle({ title: '选择发票' });
+  }
+});
 
 onShow(async () => {
   uni.showLoading({ title: '加载中...', mask: true });
@@ -74,6 +82,7 @@ const fetchList = async () => {
   let query = supabase
     .from('invoice')
     .select('id, invoice_no, invoice_title, tax_no, amount, issued_time, create_time')
+    .order('issued_time', { ascending: false })
     .order('create_time', { ascending: false });
 
   if (keyword.value) {
@@ -100,8 +109,13 @@ const goAdd = () => {
   uni.navigateTo({ url: '/pages/invoice/edit' });
 };
 
-const goDetail = (id: string) => {
-  uni.navigateTo({ url: `/pages/invoice/edit?id=${id}` });
+const onItemClick = (item: any) => {
+  if (isSelectMode.value) {
+    uni.$emit('invoiceSelected', item);
+    uni.navigateBack();
+  } else {
+    uni.navigateTo({ url: `/pages/invoice/edit?id=${item.id}` });
+  }
 };
 
 const formatDate = (dateStr: string) => {

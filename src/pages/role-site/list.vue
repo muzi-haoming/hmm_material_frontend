@@ -52,12 +52,12 @@ onShow(() => {
 });
 
 const loadRoles = async () => {
-    const { data } = await supabase.from('role').select('*').order('create_time');
+    const { data } = await supabase.from('role').select('*').order('name');
     if (data) roleList.value = data;
 };
 
 const loadSites = async () => {
-    const { data } = await supabase.from('site').select('*').order('create_time');
+    const { data } = await supabase.from('site').select('*').order('name');
     if (data) siteList.value = data;
 };
 

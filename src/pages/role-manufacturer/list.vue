@@ -52,12 +52,12 @@ onShow(() => {
 });
 
 const loadRoles = async () => {
-    const { data } = await supabase.from('role').select('*').order('create_time');
+    const { data } = await supabase.from('role').select('*').order('name');
     if (data) roleList.value = data;
 };
 
 const loadManufacturers = async () => {
-    const { data } = await supabase.from('manufacturer').select('*').order('create_time');
+    const { data } = await supabase.from('manufacturer').select('*').order('name');
     if (data) manufacturerList.value = data;
 };
 

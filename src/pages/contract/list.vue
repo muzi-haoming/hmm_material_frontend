@@ -95,7 +95,7 @@ const fetchData = async () => {
       creator,
       site:site_id(name)
     `)
-    .order('create_time', { ascending: false });
+    .order('name', { ascending: true });
 
   if (keyword.value) {
     query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);

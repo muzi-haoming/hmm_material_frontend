@@ -47,7 +47,7 @@ onShow(async () => {
 
 const loadData = async () => {
     loading.value = true;
-    let query = supabase.from('role').select('*').order('create_time', { ascending: false });
+    let query = supabase.from('role').select('*').order('name', { ascending: true });
     
     if (keyword.value) {
         query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);

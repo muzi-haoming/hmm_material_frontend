@@ -65,7 +65,7 @@ const fetchData = async () => {
   let query = supabase
     .from('statement_other_expenses_item')
     .select('*')
-    .order('create_time', { ascending: false });
+    .order('name', { ascending: true });
 
   if (keyword.value) {
     query = query.or(`name.ilike.%${keyword.value}%,code.ilike.%${keyword.value}%`);

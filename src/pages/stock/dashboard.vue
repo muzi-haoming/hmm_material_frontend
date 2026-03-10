@@ -9,7 +9,7 @@
       <view class="stats-section">
          <view class="stat-card glass">
              <view class="stat-icon-wrapper blue">
-                 <text class="iconfont icon-kucun"></text>
+                 <text class="char" style="font-size: 22px; font-weight: bold; color: inherit;">存</text>
              </view>
              <view class="stat-info">
                  <text class="stat-value">{{ totalStock }}</text>
@@ -18,7 +18,7 @@
          </view>
          <view class="stat-card glass">
              <view class="stat-icon-wrapper red">
-                 <text class="iconfont icon-warning"></text>
+                 <text class="char" style="font-size: 22px; font-weight: bold; color: inherit;">警</text>
              </view>
              <view class="stat-info">
                  <text class="stat-value">{{ lowStockCount }}</text>
@@ -31,19 +31,19 @@
       <view class="action-grid">
           <view class="action-item" @click="navTo('/pages/purchase/list')">
               <view class="action-icon purple-gradient">
-                  <text class="iconfont icon-order"></text>
+                  <text class="char" style="font-size: 24px; color: #fff; font-weight: bold;">采</text>
               </view>
               <text class="action-text">采购管理</text>
           </view>
           <view class="action-item" @click="navTo('/pages/stock-out/list')">
               <view class="action-icon orange-gradient">
-                  <text class="iconfont icon-out"></text>
+                  <text class="char" style="font-size: 24px; color: #fff; font-weight: bold;">出</text>
               </view>
               <text class="action-text">出库管理</text>
           </view>
           <view class="action-item" @click="navTo('/pages/stock-in/list')">
               <view class="action-icon blue-gradient">
-                  <text class="iconfont icon-in"></text>
+                  <text class="char" style="font-size: 24px; color: #fff; font-weight: bold;">入</text>
               </view>
               <text class="action-text">入库管理</text>
           </view>
@@ -52,7 +52,7 @@
       <!-- Search Bar -->
       <view class="search-section">
         <view class="search-box">
-          <text class="iconfont icon-search"></text>
+          <uni-icons type="search" color="#999" size="18" style="margin-right: 8px;"></uni-icons>
           <input 
             class="search-input" 
             type="text" 
@@ -62,7 +62,7 @@
             @confirm="handleSearch"
           />
           <view v-if="keyword" class="clear-btn" @click="clearSearch">
-              <text class="iconfont icon-close"></text>
+              <uni-icons type="clear" color="#ccc" size="16"></uni-icons>
           </view>
         </view>
       </view>
@@ -99,7 +99,6 @@
         </view>
         
         <view v-if="stockList.length === 0 && !loading" class="empty-state">
-          <image src="/static/empty.png" mode="aspectFit" class="empty-img"></image>
           <text>暂无库存数据</text>
         </view>
       </view>
@@ -111,6 +110,7 @@
 import { ref, computed } from 'vue';
 import { supabase } from '@/utils/supabase';
 import { onShow } from '@dcloudio/uni-app';
+import { getCurrentUser } from '@/utils/permission';
 
 interface StockItem {
     id: string;
@@ -136,6 +136,15 @@ const lowStockCount = computed(() => {
 const fetchData = async () => {
     loading.value = true;
     
+    // Check auth, but do not forcefully redirect to login inside fetchData anymore to allow guest browsing
+    const user = getCurrentUser();
+    if (!user) {
+        stockList.value = [];
+        loading.value = false;
+        return;
+    }
+    
+    // Fetch list (simple version for demo)
     let query = supabase
         .from('stock')
         .select(`
@@ -181,6 +190,7 @@ const fetchData = async () => {
 };
 
 const handleSearch = () => {
+    if (!getCurrentUser()) return navTo('/pages/login/login');
     fetchData();
 };
 
@@ -190,11 +200,15 @@ const clearSearch = () => {
 };
 
 const navTo = (url: string) => {
+    if (!getCurrentUser()) {
+        uni.navigateTo({ url: '/pages/login/login' });
+        return;
+    }
     uni.navigateTo({ url });
 };
 
 const showDetail = (item: StockItem) => {
-    // Future: navigate to detail or show popup
+    if (!getCurrentUser()) return navTo('/pages/login/login');
     console.log('Stock Detail:', item);
 };
 

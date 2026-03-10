@@ -57,6 +57,14 @@
       <button class="btn-save" @click="handleSave" :disabled="loading">
         {{ loading ? '保存中...' : '保存' }}
       </button>
+
+      <button 
+          v-if="isEdit && isStockManagedManufacturer" 
+          class="btn-receipt" 
+          @click="generateReceipt"
+      >
+          生成凭证
+      </button>
     </view>
   </view>
 </template>
@@ -102,6 +110,7 @@ const orderIndex = ref(-1);
 const loading = ref(false);
 const isEdit = ref(false);
 const isPurchaseCompleted = ref(false);
+const isStockManagedManufacturer = ref(false);
 
 const selectedOrder = computed(() => {
     return orderIndex.value >= 0 ? orders.value[orderIndex.value] : null;
@@ -138,6 +147,9 @@ onLoad(async (options: any) => {
               if (selected && selected.quantity) {
                   form.value.quantity = String(selected.quantity);
               }
+          }
+          if (orders.value[index].payer_manufacturer_id) {
+               checkManufacturerStockSetting(orders.value[index].payer_manufacturer_id);
           }
       } else {
           await loadSpecificOrder(targetId);
@@ -181,6 +193,9 @@ const loadSpecificOrder = async (id: string) => {
       
       if (!isEdit.value) {
            form.value.quantity = String(data.quantity);
+      }
+      if (data.payer_manufacturer_id) {
+          checkManufacturerStockSetting(data.payer_manufacturer_id);
       }
   }
 };
@@ -247,6 +262,14 @@ const loadData = async (id: string) => {
 
     // Set Index
     orderIndex.value = orders.value.findIndex(o => o.id === data.general_purchase_id);
+    if (orderIndex.value === -1) {
+        // If the order is not in the initial list (e.g., completed and filtered out), load it specifically
+        await loadSpecificOrder(data.general_purchase_id);
+    } else {
+        if (orders.value[orderIndex.value].payer_manufacturer_id) {
+            checkManufacturerStockSetting(orders.value[orderIndex.value].payer_manufacturer_id);
+        }
+    }
   }
 };
 
@@ -255,6 +278,19 @@ const bindOrderChange = (e: any) => {
   const selected = orders.value[orderIndex.value];
   form.value.general_purchase_id = selected.id;
   isPurchaseCompleted.value = !!selected.is_completed;
+  
+  if (selected.payer_manufacturer_id) {
+       checkManufacturerStockSetting(selected.payer_manufacturer_id);
+  }
+};
+
+const checkManufacturerStockSetting = async (id: string) => {
+    isStockManagedManufacturer.value = false;
+    if (!id) return;
+    const { data } = await supabase.from('manufacturer').select('is_manage_stock').eq('id', id).single();
+    if (data && data.is_manage_stock) {
+        isStockManagedManufacturer.value = true;
+    }
 };
 
 const handleDelete = async () => {
@@ -372,9 +408,12 @@ const handleSave = async () => {
 
     loading.value = false;
     uni.showToast({ title: '保存成功', icon: 'success' });
-    setTimeout(() => {
-      uni.navigateBack();
-    }, 1500);
+    
+    if (isStockManagedManufacturer.value) {
+         promptReceiptGeneration(savedId);
+    } else {
+         setTimeout(() => { uni.navigateBack(); }, 1500);
+    }
 
   } catch (err: any) {
       console.error('Save error:', err);
@@ -384,6 +423,28 @@ const handleSave = async () => {
 };
 
 const tempFile = ref('');
+
+const promptReceiptGeneration = (id: string) => {
+    uni.showModal({
+        title: '操作成功',
+        content: '该厂家已开启库存管理，是否立即生成《入库单》凭证？',
+        confirmText: '生成凭证',
+        cancelText: '返回列表',
+        confirmColor: '#6739b6',
+        success: (res) => {
+            if (res.confirm) {
+                uni.redirectTo({ url: `/pages/receipt/stock-slip?mode=general_in&id=${id}` });
+            } else {
+                uni.navigateBack();
+            }
+        }
+    });
+};
+
+const generateReceipt = () => {
+    if (!form.value.id) return;
+    uni.navigateTo({ url: `/pages/receipt/stock-slip?mode=general_in&id=${form.value.id}` });
+};
 
 const chooseImage = () => {
     uni.chooseImage({
@@ -487,16 +548,35 @@ const deleteImage = () => {
 
 .btn-save {
   flex: 2;
-  background-color: #6739b6;
+  background: linear-gradient(135deg, #6739b6, #855bc9);
   color: #fff;
   border-radius: 25px;
   height: 46px;
   line-height: 46px;
   font-size: 16px;
   
+  &::after { border: none; }
+  
   &:active {
     opacity: 0.9;
   }
+}
+.btn-receipt {
+    flex: 2;
+    background-color: #fff;
+    color: #6739b6;
+    border: 1px solid #6739b6;
+    border-radius: 25px;
+    height: 46px;
+    line-height: 44px;
+    font-size: 16px;
+    padding: 0;
+    
+    &::after { border: none; }
+    
+    &:active {
+      background-color: #f9f9f9;
+    }
 }
 
 .upload-box {

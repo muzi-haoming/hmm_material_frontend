@@ -27,6 +27,10 @@ export const getCurrentUser = (): UserInfo | null => {
  */
 export const refreshUserPermissions = async (userId?: string): Promise<UserInfo> => {
     if (!userId) {
+        // 先检查本地是否有 session 缓存，避免未登录时直接请求网络报错 401
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('Not authenticated');
+
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
         userId = user.id;

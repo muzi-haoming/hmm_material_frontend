@@ -7,8 +7,8 @@ import { supabase, supabaseUrl } from './supabase';
  * @returns 上传后的公开 URL 或 null (失败时)
  */
 export const uploadAvatar = async (filePath: string, userId: string): Promise<string | null> => {
-    if (!filePath || (!filePath.startsWith('http://tmp') && !filePath.startsWith('wxfile://'))) {
-        // 如果不是临时文件，直接返回原路径 (可能是已有 URL)
+    // 如果为空或者是已有的 supabase 线上地址，直接返回
+    if (!filePath || filePath.startsWith(supabaseUrl)) {
         return filePath;
     }
 
