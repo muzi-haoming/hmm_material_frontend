@@ -65,7 +65,7 @@
           <view class="card-actions">
             <text class="action-btn text-primary" @click="goEdit" v-if="canEdit">编辑</text>
             <text class="action-btn text-success" @click="handleConfirm" v-if="canConfirm">确认</text>
-            <template v-if="canOperateConfirmed">
+            <template v-if="canManageConfirmed">
               <text class="action-btn text-warning" @click="handleUnconfirm">取消确认</text>
               <text class="action-btn text-danger" @click="handleComplete">完成</text>
             </template>
@@ -99,7 +99,7 @@
       </view>
     </view>
 
-    <view class="fab-add" @click="goCreateOrder" v-if="canOperateConfirmed && currentTab === 0">
+    <view class="fab-add" @click="goCreateOrder" v-if="canCreateOrder && currentTab === 0">
       <text class="plus">+</text>
     </view>
   </view>
@@ -196,44 +196,34 @@ const agentName = computed(() => {
 });
 
 const canEdit = computed(() => {
-  // 未确认且有权限
   if (!contract.value || contract.value.is_confirmed) return false;
-  if (currentUser.value?.is_admin) return true;
-  
-  // 必须是创建人或代理人，并且有工地的权限
-  const isOwnerOrAgent = contract.value.creator === currentUser.value?.id || contract.value.agent_id === currentUser.value?.id;
-  const hasSitePerm = currentUser.value?.site_permissions?.includes(contract.value.site_id);
-  
-  return isOwnerOrAgent && hasSitePerm;
+  return !!currentUser.value?.is_admin;
 });
 
 const canConfirm = computed(() => {
-    // 逻辑同 canEdit，只有有权编辑的人才能确认
     return canEdit.value;
 });
 
-// 是否可以进行 "已确认" 状态下的操作 (取消确认/归档/新建订单)
-const canOperateConfirmed = computed(() => {
-  // 已确认且未完成，且有权限
+// 是否可以进行 "已确认" 状态下的操作 (取消确认/归档)
+const canManageConfirmed = computed(() => {
   if (!contract.value || !contract.value.is_confirmed || contract.value.is_completed) return false;
-  
-  // 管理员 或 拥有该工地权限的用户 (即工地代理)
-  if (currentUser.value?.is_admin) return true;
-  return currentUser.value?.site_permissions?.includes(contract.value.site_id);
+  return !!currentUser.value?.is_admin;
 });
 
-const canUncomplete = computed(() => {
-  // 必须已完成
-  if (!contract.value || !contract.value.is_completed) return false;
+const canCreateOrder = computed(() => {
+  if (!contract.value || !contract.value.is_confirmed || contract.value.is_completed) return false;
   
-  // 管理员
   if (currentUser.value?.is_admin) return true;
   
-  // 必须是创建人或代理人，并且有工地的权限
   const isOwnerOrAgent = contract.value.creator === currentUser.value?.id || contract.value.agent_id === currentUser.value?.id;
   const hasSitePerm = currentUser.value?.site_permissions?.includes(contract.value.site_id);
   
-  return isOwnerOrAgent && hasSitePerm;
+  return isOwnerOrAgent || hasSitePerm;
+});
+
+const canUncomplete = computed(() => {
+  if (!contract.value || !contract.value.is_completed) return false;
+  return !!currentUser.value?.is_admin;
 });
 
 const getOrderStatusText = (order: any) => {

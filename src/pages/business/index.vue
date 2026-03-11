@@ -79,12 +79,11 @@ const contractList = ref<Contract[]>([]);
 const currentUser = ref<any>(null);
 
 const canCreate = computed(() => {
-    // 简化的权限判断，实际应调用 permission.ts
+    // 只有管理员可以建合同
     if (!currentUser.value) return false;
     if (currentUser.value.is_admin) return true;
     
-    // 代理人可以建合同
-    return currentUser.value.site_permissions && currentUser.value.site_permissions.length > 0;
+    return false;
 });
 
 
