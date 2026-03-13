@@ -60,7 +60,7 @@
 
     <view class="footer">
       <button v-if="isEdit" class="btn-delete" @click="handleDelete" :disabled="loading">删除</button>
-      <button class="btn-primary" @click="handleSave" :disabled="loading">保存</button>
+      <button class="btn-save" @click="handleSave" :disabled="loading">保存</button>
     </view>
 
     <!-- 厂家选择弹窗 -->

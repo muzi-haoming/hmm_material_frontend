@@ -18,7 +18,7 @@
 
       <view class="form-item">
         <text class="label">单价 (¥)</text>
-        <input class="input" type="number" v-model="form.price" placeholder="请输入单价" />
+        <input class="input" type="digit" v-model="form.price" placeholder="请输入单价" />
       </view>
     </view>
 
